@@ -1,0 +1,50 @@
+{
+  "name": "stream-unirradio",
+  "productName": "Stream UNIR Radio",
+  "version": "0.1.0",
+  "description": "Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast",
+  "main": "src/main/main.js",
+  "author": "UNIR Radio",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.unirradio.streamunirradio",
+    "productName": "Stream UNIR Radio",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg/",
+        "to": "ffmpeg/"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jhersara",
+        "repo": "Stream-Unirradio"
+      }
+    ]
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

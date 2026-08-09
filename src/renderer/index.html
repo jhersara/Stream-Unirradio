@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com;" />
+  <title>Stream UNIR Radio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- ==================== PANEL IZQUIERDO: CONFIGURACION ==================== -->
+    <section class="panel" id="panel-config">
+      <h2 class="panel-title">Configuracion del Servidor (Zeno.fm / Icecast)</h2>
+      <hr class="panel-divider" />
+
+      <div class="field">
+        <label for="input-servidor">Direccion del Servidor (Host)</label>
+        <input type="text" id="input-servidor" value="link.zeno.fm" />
+      </div>
+
+      <div class="field">
+        <label for="input-puerto">Puerto</label>
+        <input type="text" id="input-puerto" value="80" />
+      </div>
+
+      <div class="field">
+        <label for="input-punto">Punto de Montaje (Mountpoint)</label>
+        <input type="text" id="input-punto" value="" placeholder="Copiar exactamente desde el panel de Zeno.fm" />
+      </div>
+
+      <div class="field">
+        <label for="input-usuario">Nombre de Usuario</label>
+        <input type="text" id="input-usuario" value="source" />
+      </div>
+
+      <div class="field">
+        <label for="input-password">Contrasena de Montaje</label>
+        <input type="password" id="input-password" value="" />
+      </div>
+
+      <div class="field">
+        <label for="select-device">Dispositivo de Entrada (Microfono / Consola)</label>
+        <select id="select-device">
+          <option value="">Cargando dispositivos...</option>
+        </select>
+      </div>
+
+      <h3 class="section-subtitle">Musica de Transicion</h3>
+
+      <div class="field-row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="check-intro" checked />
+          Intro
+        </label>
+        <input type="text" id="input-intro-path" readonly placeholder="Archivo de introduccion..." />
+        <button type="button" id="btn-browse-intro" class="btn-secondary">Buscar</button>
+      </div>
+
+      <div class="field-row">
+        <label class="checkbox-label">
+          <input type="checkbox" id="check-outro" checked />
+          Outro
+        </label>
+        <input type="text" id="input-outro-path" readonly placeholder="Archivo de despedida..." />
+        <button type="button" id="btn-browse-outro" class="btn-secondary">Buscar</button>
+      </div>
+    </section>
+
+    <!-- ==================== PANEL DERECHO: ESTADO Y MONITOR ==================== -->
+    <section class="panel" id="panel-status">
+      <h2 class="panel-title">Panel de Control y Monitor de Audio</h2>
+      <hr class="panel-divider" />
+
+      <div class="status-row">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="status-text">Desconectado</span>
+        <span class="timer-label">Tiempo:</span>
+        <span class="timer-value" id="timer-value">00:00:00</span>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>Vumetro de Entrada</span>
+          <span id="vu-db-value" class="mono-value">-inf dB</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill vu-fill" id="vu-fill"></div>
+        </div>
+
+        <div class="gain-row">
+          <label for="gain-slider">Volumen Transmision</label>
+          <input type="range" id="gain-slider" min="0" max="200" value="100" />
+          <span id="gain-value" class="mono-value">100%</span>
+        </div>
+      </div>
+
+      <div class="card" id="intro-progress-card" hidden>
+        <div class="card-header">
+          <span>Reproduciendo Intro</span>
+          <span id="intro-progress-time" class="mono-value">00:00 / 00:00</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill intro-fill" id="intro-progress-fill"></div>
+        </div>
+      </div>
+
+      <div class="card" id="outro-progress-card" hidden>
+        <div class="card-header">
+          <span>Reproduciendo Outro (corte en los ultimos 2s)</span>
+          <span id="outro-progress-time" class="mono-value">00:00 / 00:00</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill outro-fill" id="outro-progress-fill"></div>
+        </div>
+      </div>
+
+      <div class="button-row">
+        <button type="button" id="btn-start" class="btn-primary">Iniciar Transmision</button>
+        <button type="button" id="btn-stop" class="btn-danger" disabled>Detener Transmision</button>
+      </div>
+
+      <div class="log-card">
+        <div class="card-header">Registro de Actividad (Log)</div>
+        <div class="log-output" id="log-output"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
