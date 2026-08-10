@@ -7,8 +7,16 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('streamAPI', {
   startStream: (config) => ipcRenderer.invoke('stream:start', config),
   stopStream: () => ipcRenderer.invoke('stream:stop'),
+  setGain: (value) => ipcRenderer.invoke('stream:set-gain', value),
   listDevices: () => ipcRenderer.invoke('devices:list'),
-  selectAudioFile: () => ipcRenderer.invoke('dialog:select-audio-file'),
+  getAppInfo: () => ipcRenderer.invoke('app:info'),
+
+  // Biblioteca persistente de pistas (unificada: sin categoria fija de
+  // intro/outro a nivel de almacenamiento; importTracks admite seleccion
+  // multiple de archivos en un solo dialogo).
+  listLibrary: () => ipcRenderer.invoke('library:list'),
+  importTracks: () => ipcRenderer.invoke('library:import'),
+  deleteTrack: (id) => ipcRenderer.invoke('library:delete', id),
 
   onLog: (callback) => subscribe('stream:log', callback),
   onStatus: (callback) => subscribe('stream:status', callback),

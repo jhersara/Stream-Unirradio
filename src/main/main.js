@@ -1,15 +1,17 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const { registerIpcHandlers } = require('./ipc-handlers');
 const { initAutoUpdater } = require('./auto-updater');
+const ffmpegStream = require('./ffmpeg-stream');
 
 let mainWindow = null;
+let forceClose = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1250,
     height: 780,
-    minWidth: 1050,
+    minWidth: 640,
     minHeight: 680,
     backgroundColor: '#14161a',
     autoHideMenuBar: true,
@@ -23,10 +25,35 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // TODO (Fase 2/4): pasar mainWindow al motor de streaming (ffmpeg-stream.js)
-  // para poder emitir eventos IPC: stream:log, stream:status, stream:vu-level,
+  // ffmpeg-stream.js recibe mainWindow directamente en cada llamada desde
+  // ipc-handlers.js (startStream(mainWindow, config) / stopStream(mainWindow))
+  // para poder emitir stream:log, stream:status, stream:vu-level,
   // stream:intro-progress, stream:outro-progress.
   registerIpcHandlers(mainWindow);
+
+  // Si hay una transmision activa y el usuario intenta cerrar la ventana,
+  // confirmar primero: cerrar sin avisar cortaria el stream de inmediato,
+  // sin reproducir el outro.
+  mainWindow.on('close', (event) => {
+    if (forceClose || !ffmpegStream.isStreaming()) return;
+
+    event.preventDefault();
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancelar', 'Detener y salir'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Transmision activa',
+      message: 'Hay una transmision en curso.',
+      detail: 'Si sales ahora la conexion se cortara de inmediato, sin reproducir el outro. ¿Deseas continuar?'
+    });
+
+    if (choice === 1) {
+      forceClose = true;
+      ffmpegStream.shutdown();
+      mainWindow.close();
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -35,7 +62,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
-  initAutoUpdater();
+  initAutoUpdater(mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -45,7 +72,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  ffmpegStream.shutdown();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  ffmpegStream.shutdown();
 });

@@ -39,6 +39,32 @@ requisitos a implementar):
    (release/tag) en GitHub, los clientes instalados deben detectarla y actualizarse solos.
    Repositorio confirmado: **https://github.com/jhersara/Stream-Unirradio** — ya configurado en
    `build.publish` de `package.json` (`owner: jhersara`, `repo: Stream-Unirradio`).
+5. **Efectos de sonido de interfaz.** Sintetizados con Web Audio API en tiempo real (sin
+   archivos de audio externos, para no depender de licencias): sonido de click de navegación,
+   tono de éxito, tono de inicio/fin de transmisión y tono de error. Implementado en
+   `src/renderer/sound-fx.js` (`window.SoundFX`).
+6. **Panel "en vivo" con contador.** Tarjeta destacada (hero) en la vista Estudio con indicador
+   pulsante de estado y un reloj grande (`HH:MM:SS`) que corre mientras hay transmisión activa.
+7. **Vúmetro y control de volumen.** Vúmetro segmentado tipo consola (verde/amarillo/rojo segun
+   nivel) y control deslizante de ganancia, ambos en la vista Estudio.
+8. **Biblioteca persistente y unificada de pistas.** Las pistas importadas se COPIAN dentro de
+   la carpeta de datos de usuario de la app (`app.getPath('userData')/media-library/`), no se
+   referencia solo la ruta original, para que sigan disponibles aunque el archivo original se
+   mueva o se borre. La biblioteca es una sola lista (sin categoría fija de intro/outro a nivel
+   de almacenamiento): cualquier pista puede usarse como intro, como outro, o como ambas. El
+   diálogo de importación acepta selección múltiple de archivos en un solo paso. Implementado en
+   `src/main/library-manager.js` + vista "Biblioteca" del renderer (importar, listar, eliminar).
+   La vista "Configuración" elige, de esa misma lista, qué pista usar como intro activa y cuál
+   como outro activo para la próxima transmisión (dos selectores independientes sobre el mismo
+   catálogo).
+9. **Navegación por secciones.** Barra lateral con 4 secciones: Estudio (dashboard principal),
+   Biblioteca, Configuración, Información (about/versión de la app).
+10. **Identidad visual UNIR Radio.** Paleta tomada directamente de `../../styles/UI.css` del
+    sitio principal (no inventada): Rich Black `#03060f`, Navbar Blue `#13294B` / hover
+    `#1d4179`, Gold `#fcc332`, Sky Blue `#6ea8fe`, texto `#e9edf5`. Tipografía Poppins (Google
+    Fonts). Iconos de línea minimalista escritos a mano en `src/renderer/icons.js` (estilo
+    Lucide/Feather) para no depender de un bundler en el renderer; se pueden reemplazar por
+    `lucide-static` más adelante sin tocar el resto del código.
 
 ---
 
@@ -58,90 +84,153 @@ requisitos a implementar):
 - [x] Configurar proceso principal (`main.js`) con `BrowserWindow` básica.
 - [x] Configurar `preload.js` con `contextBridge` para exponer solo las funciones necesarias al
       renderer (sin `nodeIntegration` directo, por seguridad).
-- [ ] Verificar que la ventana abre correctamente en Windows (bloqueado por Fase 1.5 — falta
-      `electron-updater`, ver abajo).
+- [x] Verificar que la ventana abre correctamente en Windows con todo el motor conectado
+      (`npm start`) — confirmado, sin errores en el log.
 
-## Fase 1.5 — Entorno de build nativo (Windows) — EN CURSO
+## Fase 1.5 — Entorno de build nativo (Windows) — RESUELTO
 
-`npm install electron-updater naudiodon` falló porque `naudiodon` requiere compilar un módulo
-nativo (`node-gyp`) y en esta máquina falta el **Windows SDK** dentro de Visual Studio Build
-Tools (el log muestra VS2019 Build Tools instalado pero "missing any Windows SDK"). Como ambos
-paquetes se instalaron en el mismo comando, `electron-updater` tampoco quedó instalado.
+`naudiodon` ya compiló correctamente (`node_modules/naudiodon/build/Release/naudiodon.node`
+​presente) y `electron-updater` quedó instalado. El bloqueo de Visual Studio Build
+Tools/Windows SDK se resolvió.
 
-- [ ] Instalar/completar Visual Studio Build Tools con el workload "Desktop development with
-      C++" (esto incluye el Windows SDK automáticamente):
-      https://visualstudio.microsoft.com/visual-cpp-build-tools/
-- [ ] Reiniciar la terminal (o la PC) después de instalar, para que las variables de entorno se
-      refresquen.
-- [ ] Instalar `electron-updater` por separado (no depende de compilación nativa, debería
-      funcionar de inmediato): `npm install electron-updater`
-- [ ] Reintentar `npm install naudiodon` por separado una vez esté el Windows SDK.
-- [ ] Si `naudiodon` sigue sin compilar, evaluar alternativa de captura de audio como plan B
-      (a decidir con el usuario, ver spec funcional #1).
+- [x] Instalar/completar Visual Studio Build Tools con el Windows SDK.
+- [x] Instalar `electron-updater`.
+- [x] `naudiodon` compilado con exito (`naudiodon.node` generado).
+- [x] Colocar `ffmpeg.exe` en `resources/ffmpeg/` — confirmado (`ffmpeg.exe`, `ffprobe.exe` y
+      `ffplay.exe` ya están ahí).
 
-## Fase 2 — Motor de streaming (proceso principal)
+### Sub-bloqueo: ABI mismatch de módulos nativos con Electron
 
-- [ ] Módulo `ffmpeg-stream.js`: construir el comando ffmpeg equivalente al de la versión Python
+Aunque `naudiodon` compiló bien contra el Node.js del SISTEMA, Electron trae su propio Node.js
+interno con un ABI (`NODE_MODULE_VERSION`) distinto. El log lo mostró claro: el binario se
+compiló con `NODE_MODULE_VERSION 127` pero Electron pide `148`. Esto es normal y esperado en
+cualquier app Electron con módulos nativos — se soluciona con `@electron/rebuild`, que
+recompila los módulos nativos específicamente contra el ABI de Electron.
+
+- [x] Agregado `"postinstall": "electron-rebuild -f -w naudiodon"` en `package.json`, para que
+      esto se resuelva solo en cada `npm install` futuro (por ejemplo, si alguien clona el repo
+      en otra maquina).
+- [x] `npm install --save-dev @electron/rebuild` corrido, rebuild disparado, `naudiodon` carga
+      sin errores. **Fase 1.5 cerrada por completo.**
+
+## Fase 2 — Motor de streaming (proceso principal) — IMPLEMENTADO
+
+- [x] Módulo `ffmpeg-stream.js`: construye el comando ffmpeg equivalente al de la versión Python
       (entrada `s16le` por stdin, salida `mp3` a `icecast://user:pass@host:port/mount`,
       `-legacy_icecast 1`, `-content_type audio/mpeg`, metadatos `-ice_name` / `-ice_description`).
-- [ ] Manejo de proceso hijo con `child_process.spawn`, captura de `stderr` para log en tiempo
-      real (igual que el `monitor_ffmpeg` de la versión Python).
-- [ ] Función de construcción de URL Icecast con codificación segura de usuario/contraseña/mount.
-- [ ] Módulo `media-probe.js`: obtener duración de intro/outro vía `ffmpeg -i` (parseo de
-      `Duration: HH:MM:SS.xx`).
-- [ ] Reproducción de intro: decodificar a PCM y encolar al stdin del encoder ANTES del audio en
-      vivo, emitiendo progreso (`intro:progress`) por IPC en cada chunk escrito.
-- [ ] Reproducción de outro con corte diferido: al detener, decodificar outro a PCM y encolarlo
-      al stdin del encoder, emitiendo progreso (`outro:progress`) por IPC, y programar el cierre
-      real del proceso ffmpeg/conexión Icecast exactamente 2 segundos antes del fin calculado
-      del outro.
-- [ ] Captura de audio en vivo (dispositivo de entrada seleccionado) y escritura continua al
-      stdin del proceso ffmpeg de salida.
-- [ ] Control de ganancia/volumen aplicado en tiempo real sobre el buffer de audio antes de
-      enviarlo.
-- [ ] Cálculo de nivel de pico/dB para alimentar el vúmetro del renderer vía IPC.
-- [ ] Manejo de errores de conexión: reconocer patrones de fallo conocidos (400, 401, 403, 404,
-      `-10053`/`-10054`) y emitir mensajes de diagnóstico claros (mountpoint/credenciales
-      incorrectas, servidor caído, etc.) hacia el log del renderer.
+- [x] Manejo de proceso hijo con `child_process.spawn`, captura de `stderr` para log en tiempo
+      real, con interpretación de errores conocidos (ver mas abajo).
+- [x] Función de construcción de URL Icecast con codificación segura (`encodeURIComponent`) de
+      usuario/contraseña/mount.
+- [x] Módulo `media-probe.js`: obtener duración de intro/outro vía `ffmpeg -i` (parseo de
+      `Duration: HH:MM:SS.xx`). En uso desde `library-manager.js` al importar pistas.
+- [x] Reproducción de intro/outro con **ritmo real controlado por código**, no "lo mas rapido
+      posible": se decodifica el archivo COMPLETO a PCM en memoria (`decodeToPcm`) y se escribe
+      al stdin del encoder en trozos de 50ms via `playTimedPcm`, emitiendo
+      `stream:intro-progress` / `stream:outro-progress` con tiempo real transcurrido. Esto era
+      necesario para que el corte a -2s del outro sea preciso (no depende de la contrapresion
+      de red, que no es predecible).
+- [x] Corte diferido del outro: `playTimedPcm` acepta `cutoffSeconds` = duración - 2s; al
+      alcanzarlo, deja de escribir y `stopStream` cierra la conexión real de inmediato.
+- [x] Captura de audio en vivo con `naudiodon` (`audio-capture.js`) y escritura continua al
+      stdin del encoder.
+- [x] Control de ganancia en tiempo real (`applyGain` sobre cada buffer, ajustable en caliente
+      desde el slider via el canal `stream:set-gain`, incluso con la transmisión activa).
+- [x] Cálculo de nivel de pico/dB (`computePeakDb`) alimentando `stream:vu-level`.
+- [x] Manejo de errores de conexión: `interpretFfmpegLine` reconoce 400/401/403/404 y
+      `-10053`/`-10054`, agregando una línea de "Sugerencia" al log con el diagnóstico
+      (ej. mountpoint/contraseña no coinciden con el panel de Zeno.fm).
+- [x] Limpieza de emergencia (`shutdown()`) enganchada a `window-all-closed` / `before-quit` en
+      `main.js`, para no dejar procesos `ffmpeg.exe` huérfanos si se cierra la app a mitad de
+      una transmisión.
+- [x] **Requisitos para probar con conexión real ya satisfechos** (Fase 6): `naudiodon`
+      compilado y funcionando, `ffmpeg.exe` presente en `resources/ffmpeg/`. Solo falta la
+      prueba en si contra Zeno.fm con credenciales reales.
 
-## Fase 3 — Interfaz (renderer)
+## Fase 3 — Interfaz (renderer) — REDISEÑO COMPLETO
 
-- [ ] Layout de dos paneles (Configuración / Estado y Monitor), igual estructura que la versión
-      Python.
-- [ ] Panel de configuración: servidor, puerto, punto de montaje, usuario, contraseña, selector
-      de dispositivo de entrada, selección de archivos intro/outro.
-- [ ] Panel de estado: indicador de conexión, temporizador de transmisión, vúmetro en tiempo
-      real, control deslizante de ganancia.
-- [ ] Barra de progreso de intro (visible al iniciar, se oculta cuando termina y arranca el vivo).
-- [ ] Barra de progreso de outro (visible al detener, se oculta cuando se corta la conexión real).
-- [ ] Consola de log con timestamps.
-- [ ] Botones Iniciar/Detener con estados deshabilitados según corresponda (incluyendo el estado
-      intermedio "reproduciendo outro" donde Detener ya no debería volver a dispararse dos veces).
-- [ ] Aplicar identidad visual de UNIR Radio (tipografía Poppins, paleta de colores del proyecto
-      principal) en lugar del tema genérico de CustomTkinter.
-- [ ] Confirmación al cerrar la ventana si hay una transmisión (o un outro) activo.
+Rediseño total sobre el layout inicial de dos paneles: ahora es una app de navegación lateral
+con 4 vistas, siguiendo las especificaciones funcionales #5-#10.
+
+- [x] Barra de navegación lateral con 4 secciones: Estudio, Biblioteca, Configuración,
+      Información (router simple por `data-view` / `data-view-panel`, sin dependencias).
+- [x] Vista **Estudio**: hero "en vivo" con contador (`HH:MM:SS`) e indicador pulsante,
+      vúmetro segmentado + control de ganancia, tarjetas de progreso de intro/outro, botones
+      Iniciar/Detener, consola de log.
+- [x] Vista **Configuración**: servidor, puerto, punto de montaje, usuario, contraseña, selector
+      de dispositivo de entrada, y selectores independientes de "pista activa" de intro/outro,
+      ambos alimentados desde la MISMA lista unificada de la Biblioteca. Implementados como un
+      dropdown personalizado (`.track-picker`, no un `<select>` nativo) para poder mostrar el
+      nombre Y la duración de cada pista con claridad antes de elegirla — un `<option>` nativo
+      no admite ese tipo de formato.
+- [x] Vista **Biblioteca**: catálogo único de pistas (sin columnas separadas de intro/outro),
+      importación con selección múltiple de archivos en un solo diálogo, listado en grilla
+      responsiva con duración, eliminar. Funcional de verdad, no es un stub.
+- [x] Vista **Información**: nombre y versión de la app (leidos via IPC `app:info`), descripción,
+      link al repositorio.
+- [x] Barra/tarjeta de progreso de intro y outro (se muestran/ocultan via IPC
+      `stream:intro-progress` / `stream:outro-progress`; el motor que las alimenta es Fase 2).
+- [x] Consola de log con timestamps, con animación de entrada por linea.
+- [x] Botones Iniciar/Detener con estados deshabilitados según corresponda.
+- [x] Identidad visual UNIR Radio aplicada: paleta real del sitio (`--primary #13294B`,
+      `--gold #fcc332`, `--sky-blue #6ea8fe`, fondo `--rich-black #03060f`), tipografía Poppins,
+      iconos de linea, animaciones (fade de vistas, pulso del indicador "en vivo", shimmer en
+      barras de progreso, hover en botones).
+- [x] Efectos de sonido de interfaz (`sound-fx.js`) enganchados a: navegación, importar/eliminar
+      pista, iniciar/detener transmisión, errores de validación.
+- [x] Layout responsivo: la barra lateral se colapsa a solo iconos por debajo de 880px de ancho
+      de ventana, y las grillas de Configuración/hero pasan a una columna por debajo de 680px.
+      `minWidth` de la ventana bajado de 1050 a 640px en `main.js` para que el rango sea
+      alcanzable de verdad.
+- [x] Hero "en vivo" con estilo de panel digital: tipografía Orbitron para el contador
+      (`--font-digital`), resplandor (`text-shadow`) en los dígitos, halo radial de fondo, y el
+      indicador de estado como badge en pastilla con tinte de color según el estado
+      (conectando/en vivo).
+- [x] Confirmación al cerrar la ventana si hay una transmisión activa: dialogo nativo
+      ("Cancelar" / "Detener y salir") en `main.js`, usando `ffmpegStream.isStreaming()`. Si el
+      usuario confirma, se hace un corte de emergencia (sin outro) via `shutdown()`.
+- [x] Verificar visualmente en Windows que el nuevo diseño renderiza bien — confirmado por el
+      usuario, sin errores.
 
 ## Fase 4 — Comunicación IPC
 
-- [ ] Canales: `stream:start`, `stream:stop`, `stream:log`, `stream:status`, `stream:vu-level`,
+- [x] Canales de streaming (implementados de verdad, Fase 2): `stream:start`, `stream:stop`,
+      `stream:set-gain`, `stream:log`, `stream:status`, `stream:vu-level`,
       `stream:intro-progress`, `stream:outro-progress`, `devices:list`.
-- [ ] Listado de dispositivos de audio de entrada disponibles, expuesto al renderer al arrancar.
+- [x] Canales de biblioteca (implementados de verdad): `library:list`, `library:import`
+      (selección múltiple, sin argumentos), `library:delete` (recibe `id` directo).
+- [x] Canal de info de la app: `app:info` (nombre + versión para la vista Información).
+- [x] Listado de dispositivos de audio de entrada REALES: `devices:list` ahora llama a
+      `audioCapture.listInputDevices()` (naudiodon). Devuelve `[]` con un aviso en el log si
+      `naudiodon` no está disponible/compilado (ver Fase 1.5).
 
 ## Fase 5 — Empaquetado
 
-- [ ] Configurar `electron-builder` para generar instalador Windows (`.exe`, NSIS).
-- [ ] Incluir binario de `ffmpeg.exe` como recurso empaquetado (`extraResources`).
+- [x] Configurar `electron-builder` para generar instalador Windows (`.exe`, NSIS), con opciones
+      profesionales: elegir carpeta de instalación, accesos directos de escritorio y menú
+      inicio (`build.nsis` en `package.json`).
+- [x] `ffmpeg.exe` incluido como recurso empaquetado (`extraResources` ya apunta a
+      `resources/ffmpeg/`; `media-probe.js` resuelve la ruta distinto en dev vs. empaquetado via
+      `app.isPackaged`).
+- [ ] Agregar icono de marca (`resources/icon.ico`, 256x256) y referenciarlo en `build.win.icon`
+      — opcional, mejora estética pendiente; sin él, el instalador usa el icono genérico de
+      Electron.
 - [ ] Probar instalador en una máquina limpia (sin Node/ffmpeg preinstalado) para validar que
-      todo funcione de forma autónoma.
+      todo funcione de forma autónoma. Requiere correr `npm run dist` (Claude no puede ejecutar
+      comandos en esta máquina).
 
-## Fase 5.5 — Actualizaciones automáticas (GitHub)
+## Fase 5.5 — Actualizaciones automáticas (GitHub) — CONFIGURADO
 
-- [ ] Confirmar owner/nombre del repositorio de GitHub (dato pendiente del usuario) y actualizar
-      `build.publish` en `package.json`.
-- [ ] Integrar `electron-updater` en el proceso principal: `checkForUpdatesAndNotify()` al
-      arrancar, y manejo de eventos (`update-available`, `update-downloaded`, errores).
+- [x] Repositorio confirmado y configurado en `build.publish` (`owner: jhersara`,
+      `repo: Stream-Unirradio`).
+- [x] `electron-updater` integrado en `auto-updater.js`: `checkForUpdatesAndNotify()` al
+      arrancar, manejo de eventos (`update-available`, `update-downloaded`, `error`), y ahora
+      también refleja el estado en la consola de actividad de la app (no solo en DevTools), via
+      `sendLog`.
 - [ ] Definir flujo de publicación: cada release en GitHub (tag + build subido a Releases) debe
-      quedar disponible para que los clientes instalados lo detecten automáticamente.
+      quedar disponible para que los clientes instalados lo detecten automáticamente. Con
+      `GH_TOKEN` configurado como variable de entorno, `npm run dist -- --publish always` sube
+      el build directo a un Release de GitHub.
 - [ ] Nota: en Windows, un instalador sin firma de código puede generar advertencias de
       SmartScreen y, dependiendo de la configuración, complicar el auto-update silencioso.
       Evaluar más adelante si se requiere certificado de firma de código.
@@ -165,18 +254,22 @@ Stream-Unirradio/
 │   └── ffmpeg/          # ffmpeg.exe (y build correspondiente) para empaquetar con la app
 └── src/
     ├── main/
-    │   ├── main.js          # proceso principal, ciclo de vida de la app
-    │   ├── ffmpeg-stream.js # motor de streaming (Fase 2)
-    │   ├── media-probe.js   # duración de intro/outro (Fase 2)
-    │   ├── audio-capture.js # captura de micrófono con naudiodon (Fase 2)
-    │   ├── ipc-handlers.js  # registro de canales IPC (Fase 4)
-    │   └── auto-updater.js  # electron-updater (Fase 5.5)
+    │   ├── main.js            # proceso principal, ciclo de vida de la app
+    │   ├── ffmpeg-stream.js   # motor de streaming (implementado)
+    │   ├── media-probe.js     # duración de audio via ffmpeg -i (implementado)
+    │   ├── audio-capture.js   # captura de micrófono con naudiodon (implementado)
+    │   ├── library-manager.js # biblioteca persistente y unificada de pistas (implementado)
+    │   ├── ipc-events.js      # helpers centralizados para emitir eventos al renderer
+    │   ├── ipc-handlers.js    # registro de canales IPC
+    │   └── auto-updater.js    # electron-updater (Fase 5.5)
     ├── preload/
-    │   └── preload.js       # contextBridge, superficie expuesta al renderer
+    │   └── preload.js         # contextBridge, superficie expuesta al renderer
     └── renderer/
-        ├── index.html
-        ├── renderer.js
-        └── styles.css
+        ├── index.html         # shell con sidebar + 4 vistas
+        ├── renderer.js        # router de vistas, biblioteca, IPC, formato
+        ├── styles.css         # paleta UNIR Radio, animaciones
+        ├── icons.js           # set de iconos SVG de linea (window.renderIcon)
+        └── sound-fx.js        # efectos de sonido sintetizados (window.SoundFX)
 ```
 
 ## Notas de contexto (para continuidad entre sesiones)
@@ -190,7 +283,19 @@ Stream-Unirradio/
   UNIR Radio y debe permanecer intacto.
 - Repositorio de GitHub del proyecto: https://github.com/jhersara/Stream-Unirradio (ya
   configurado en `package.json`).
-- Bloqueo activo: falta el Windows SDK para compilar `naudiodon` (ver Fase 1.5).
+- La biblioteca de pistas se unificó (antes separaba `intros`/`outros` en el índice guardado).
+  `library-manager.js` migra automáticamente el `library.json` viejo la primera vez que lo lee
+  (no hace falta reimportar nada ni mover archivos a mano).
+- **Aviso de trabajo concurrente:** durante la sesión que implementó la Fase 2 (motor de
+  streaming), se detectó que `library-manager.js`, `preload.js`, `renderer.js`, `index.html` y
+  `main.js` ya habían sido modificados por otra sesión/instancia (probablemente Claude Desktop
+  abierto en paralelo) hacia el esquema unificado de biblioteca antes descrito, ademas de mejoras
+  de layout responsivo y tipografía Orbitron para el contador. `ffmpeg-stream.js` e
+  `ipc-handlers.js` se escribieron/ajustaron para calzar con ese esquema real (no con uno viejo
+  asumido). **Si en el futuro algo no compila o una llamada IPC falla con "is not a function",
+  lo primero a revisar es que las firmas entre `preload.js` ↔ `ipc-handlers.js` ↔
+  `library-manager.js` / `ffmpeg-stream.js` sigan coincidiendo** — sesiones concurrentes pueden
+  volver a desalinearlas.
 
 ## Control de versiones
 

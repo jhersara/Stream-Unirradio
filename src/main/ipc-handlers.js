@@ -1,38 +1,91 @@
-const { ipcMain, dialog } = require('electron');
+const { ipcMain, dialog, app } = require('electron');
+const libraryManager = require('./library-manager');
+const ffmpegStream = require('./ffmpeg-stream');
+const audioCapture = require('./audio-capture');
+const { sendLog } = require('./ipc-events');
 
 /**
- * Registra los canales IPC expuestos al renderer a través de preload.js.
+ * Registra los canales IPC expuestos al renderer a traves de preload.js.
  *
- * Los handlers de streaming (stream:start / stream:stop / devices:list) son
- * stubs por ahora: el motor real (ffmpeg-stream.js, audio-capture.js,
- * media-probe.js) se implementa en la Fase 2 del README. Este archivo ya
- * deja la forma final de la API para que el renderer (Fase 3) se pueda
- * construir en paralelo contra esta interfaz sin esperar al motor completo.
+ * Streaming (stream:start / stream:stop / stream:set-gain / devices:list) ya
+ * esta implementado de verdad (Fase 2, ver ffmpeg-stream.js + audio-capture.js).
+ * La biblioteca de intro/outro (Fase 3) tambien esta implementada.
  */
 function registerIpcHandlers(mainWindow) {
+  // ---------------------------------------------------------------------
+  // Streaming (Fase 2 - implementado)
+  // ---------------------------------------------------------------------
   ipcMain.handle('stream:start', async (event, config) => {
-    // TODO (Fase 2): construir comando ffmpeg, iniciar captura con naudiodon,
-    // reproducir intro emitiendo 'stream:intro-progress', luego pasar a audio
-    // en vivo emitiendo 'stream:vu-level'.
-    sendLog(mainWindow, 'Motor de streaming aun no implementado (Fase 2 pendiente).');
-    return { ok: false, reason: 'not-implemented' };
+    return ffmpegStream.startStream(mainWindow, config);
   });
 
   ipcMain.handle('stream:stop', async () => {
-    // TODO (Fase 2): reproducir outro emitiendo 'stream:outro-progress' y
-    // cortar la conexion real a Icecast 2 segundos antes de que el outro
-    // termine (ver "Especificaciones funcionales confirmadas" en README).
-    sendLog(mainWindow, 'Detener aun no implementado (Fase 2 pendiente).');
-    return { ok: false, reason: 'not-implemented' };
+    return ffmpegStream.stopStream(mainWindow);
+  });
+
+  ipcMain.handle('stream:set-gain', async (event, value) => {
+    ffmpegStream.setGain(Number(value));
+    return { ok: true };
   });
 
   ipcMain.handle('devices:list', async () => {
-    // TODO (Fase 2): listar dispositivos de entrada reales con naudiodon.
-    return [];
+    if (!audioCapture.isAvailable()) {
+      const err = audioCapture.getLoadError();
+      sendLog(
+        mainWindow,
+        `Aviso: no se pudo cargar el modulo de audio (naudiodon)${err ? ': ' + err.message : ''}. Revisa la Fase 1.5 del README.`
+      );
+      return [];
+    }
+    return audioCapture.listInputDevices();
   });
 
+  // ---------------------------------------------------------------------
+  // Info de la app (vista "Informacion")
+  // ---------------------------------------------------------------------
+  ipcMain.handle('app:info', async () => ({
+    name: app.getName(),
+    version: app.getVersion()
+  }));
+
+  // ---------------------------------------------------------------------
+  // Biblioteca de intro/outro (Fase 3 - implementado)
+  // ---------------------------------------------------------------------
+  ipcMain.handle('library:list', async () => {
+    return libraryManager.listTracks();
+  });
+
+  ipcMain.handle('library:import', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Seleccionar pistas de audio',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Archivos de audio', extensions: ['mp3', 'wav', 'aac', 'flac', 'm4a', 'ogg'] },
+        { name: 'Todos los archivos', extensions: ['*'] }
+      ]
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { imported: 0, library: libraryManager.listTracks() };
+    }
+    try {
+      const library = await libraryManager.importTracks(result.filePaths);
+      sendLog(mainWindow, `${result.filePaths.length} pista(s) importada(s) a la biblioteca.`);
+      return { imported: result.filePaths.length, library };
+    } catch (err) {
+      sendLog(mainWindow, `ERROR importando pistas: ${err.message}`);
+      return { imported: 0, library: libraryManager.listTracks() };
+    }
+  });
+
+  ipcMain.handle('library:delete', async (event, id) => {
+    return libraryManager.deleteTrack(id);
+  });
+
+  // ---------------------------------------------------------------------
+  // Dialogo generico (usado por vistas que aun no tienen flujo propio)
+  // ---------------------------------------------------------------------
   ipcMain.handle('dialog:select-audio-file', async () => {
-    const result = await dialog.showOpenDialog({
+    const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Seleccionar archivo de audio',
       properties: ['openFile'],
       filters: [
@@ -43,15 +96,6 @@ function registerIpcHandlers(mainWindow) {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
-}
-
-function sendLog(mainWindow, message) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('stream:log', {
-      timestamp: new Date().toISOString(),
-      message
-    });
-  }
 }
 
 module.exports = { registerIpcHandlers };
