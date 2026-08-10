@@ -1,40 +1,50 @@
 /* =====================================================
-   VARIABLES — paleta oficial de UNIR Radio (tomada de
-   ../../styles/UI.css del sitio principal)
+   VARIABLES — estilo Visual Studio Code (Dark+) con los
+   acentos de marca UNIR Radio conservados en vez del azul
+   por defecto de VS Code (#007acc). Estructura neutra
+   (fondos, bordes, texto) tomada del tema Dark+ real.
    ===================================================== */
 :root {
-  --rich-black: #03060f;
-  --primary: #13294B;
+  --bg-editor: #1e1e1e;
+  --bg-elevated: #252526;
+  --bg-activitybar: #333333;
+  --bg-input: #3c3c3c;
+  --bg-hover: #2a2d2e;
+  --bg-selected: #37373d;
+  --border: #3c3c3c;
+
+  --text: #cccccc;
+  --text-bright: #ffffff;
+  --text-muted: #8a8a8a;
+
+  /* Acentos de marca UNIR Radio */
+  --primary: #13294b;
   --primary-light: #1d4179;
   --gold: #fcc332;
-  --sky-blue: #6ea8fe;
-  --white: #ffffff;
-  --text: #e9edf5;
-  --text-muted: #9aa4b8;
-  --danger: #e63946;
-  --success: #2ecc71;
-  --warning: #fcc332;
+  --gold-dim: #d9a62a;
+  --danger: #f14c4c;
+  --success: #89d185;
 
-  --bg-app: var(--rich-black);
-  --bg-sidebar: #0a0e18;
-  --bg-panel: #10141f;
-  --bg-card: #151b28;
-  --border-subtle: #232b3d;
+  --radius: 3px;
+  --transition: .12s ease;
 
-  --shadow: 0 8px 30px rgba(0, 0, 0, .35);
-  --transition: .25s ease;
-  --font-digital: 'Orbitron', Consolas, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Segoe WPC', Tahoma, Arial, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html, body {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  background: var(--bg-app);
+  background: var(--bg-editor);
   color: var(--text);
-  font-family: 'Poppins', -apple-system, Segoe UI, sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
 }
 
@@ -43,122 +53,92 @@ button, input, select {
 }
 
 /* =====================================================
-   LAYOUT GENERAL
+   LAYOUT GENERAL — activity bar + contenido + status bar,
+   igual que la ventana principal de VS Code.
    ===================================================== */
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.workbench {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 /* =====================================================
-   SIDEBAR / NAVEGACION
+   ACTIVITY BAR
    ===================================================== */
-.sidebar {
-  width: 220px;
+.activity-bar {
+  width: 48px;
   flex-shrink: 0;
-  background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-activitybar);
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
-}
-
-.sidebar-brand {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 8px 24px 8px;
 }
 
-.brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+.activity-brand {
+  width: 30px;
+  height: 30px;
+  margin: 9px 0 8px;
+  border-radius: 6px;
   background: linear-gradient(135deg, var(--primary), var(--primary-light));
   color: var(--gold);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 800;
-  font-size: 14px;
-  flex-shrink: 0;
-  box-shadow: var(--shadow);
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.brand-title {
   font-weight: 700;
-  font-size: 13px;
-  color: var(--white);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
-.brand-subtitle {
-  font-size: 10px;
-  color: var(--gold);
-  font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-
-.nav-list {
+.activity-items {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  flex: 1;
+  width: 100%;
 }
 
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.activity-item {
+  position: relative;
+  width: 48px;
+  height: 48px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  padding: 11px 12px;
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--transition), color var(--transition), transform var(--transition);
-}
-
-.nav-item:hover {
-  background: rgba(255, 255, 255, .04);
-  color: var(--text);
-}
-
-.nav-item-active {
-  background: rgba(252, 195, 50, .1);
-  color: var(--gold);
-  font-weight: 600;
-}
-
-.nav-item-active .nav-icon {
-  color: var(--gold);
-}
-
-.nav-icon {
+  color: rgba(255, 255, 255, .5);
   display: flex;
   align-items: center;
-  color: inherit;
-  flex-shrink: 0;
+  justify-content: center;
+  cursor: pointer;
+  transition: color var(--transition);
 }
 
-.sidebar-footer {
-  padding: 10px 8px 2px;
-  border-top: 1px solid var(--border-subtle);
+.activity-item:hover {
+  color: rgba(255, 255, 255, .85);
 }
 
-.sidebar-version {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: Consolas, monospace;
+.activity-item-active {
+  color: var(--text-bright);
+}
+
+.activity-item-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--gold);
+}
+
+.activity-icon {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
 }
 
 /* =====================================================
@@ -166,30 +146,37 @@ button, input, select {
    ===================================================== */
 .content {
   flex: 1;
-  padding: 22px 26px;
+  background: var(--bg-editor);
+  padding: 20px 26px;
   overflow-y: auto;
   min-width: 0;
 }
 
 .view {
   display: none;
-  animation: view-fade-in .28s ease;
 }
 
 .view-active {
   display: block;
+  animation: view-fade-in .15s ease;
 }
 
 @keyframes view-fade-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .view-title {
-  font-size: 18px;
+  font-size: 11px;
   font-weight: 700;
-  margin: 0 0 4px 0;
-  color: var(--white);
+  margin: 0 0 16px 0;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.view-header-row .view-title {
+  margin-bottom: 4px;
 }
 
 .view-subtitle {
@@ -205,66 +192,33 @@ button, input, select {
   font-weight: 700;
   color: var(--gold);
   text-transform: uppercase;
-  letter-spacing: .05em;
+  letter-spacing: .06em;
   margin: 22px 0 4px 0;
 }
 
 /* =====================================================
-   HERO "EN VIVO" / CONTADOR — estilo panel digital
+   PANEL "EN VIVO" (Estudio)
    ===================================================== */
-.onair-hero {
-  position: relative;
+.onair-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   flex-wrap: wrap;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
-  border-radius: 16px;
-  padding: 22px 28px;
-  margin-bottom: 16px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
 }
 
-.onair-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 12% 50%, rgba(252, 195, 50, .18), transparent 55%);
-  pointer-events: none;
-}
-
-.onair-badge {
-  position: relative;
-  z-index: 1;
+.onair-left {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 18px 9px 12px;
-  background: rgba(3, 6, 15, .32);
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 999px;
-  transition: background var(--transition), border-color var(--transition);
-}
-
-.onair-badge.is-live {
-  border-color: rgba(230, 57, 70, .45);
-  background: rgba(230, 57, 70, .1);
-}
-
-.onair-badge.is-connecting {
-  border-color: rgba(252, 195, 50, .45);
-  background: rgba(252, 195, 50, .1);
 }
 
 .onair-dot {
-  width: 16px;
-  height: 16px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--text-muted);
   flex-shrink: 0;
-  box-shadow: 0 0 0 0 rgba(230, 57, 70, .5);
 }
 
 .onair-dot.is-live {
@@ -278,18 +232,20 @@ button, input, select {
 }
 
 @keyframes onair-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(230, 57, 70, .55); }
-  50%      { box-shadow: 0 0 0 9px rgba(230, 57, 70, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(241, 76, 76, .5); }
+  50%      { box-shadow: 0 0 0 6px rgba(241, 76, 76, 0); }
 }
 
 @keyframes onair-pulse-soft {
   0%, 100% { opacity: 1; }
-  50%      { opacity: .45; }
+  50%      { opacity: .4; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .onair-dot.is-live,
-  .onair-dot.is-connecting {
+  .onair-dot.is-connecting,
+  .statusbar-dot.is-live,
+  .statusbar-dot.is-connecting {
     animation: none;
   }
 }
@@ -300,56 +256,37 @@ button, input, select {
 }
 
 .onair-status {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--white);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
 }
 
 .onair-substatus {
   font-size: 11.5px;
-  color: rgba(233, 237, 245, .65);
-  margin-top: 2px;
-}
-
-.onair-display {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.onair-display-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: rgba(233, 237, 245, .5);
+  color: var(--text-muted);
+  margin-top: 1px;
 }
 
 .onair-timer {
-  font-family: var(--font-digital);
-  font-size: 34px;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
   color: var(--gold);
-  letter-spacing: .05em;
-  text-shadow: 0 0 20px rgba(252, 195, 50, .5);
-  line-height: 1;
+  letter-spacing: .02em;
 }
 
 /* =====================================================
-   TARJETAS
+   PANELES
    ===================================================== */
-.card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+.panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px 16px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
-.card-header {
+.panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -357,11 +294,11 @@ button, input, select {
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: .03em;
+  letter-spacing: .04em;
   margin-bottom: 10px;
 }
 
-.card-header-title {
+.panel-header-title {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -374,7 +311,7 @@ button, input, select {
 }
 
 .mono-value {
-  font-family: Consolas, monospace;
+  font-family: var(--font-mono);
   color: var(--text);
   text-transform: none;
   font-weight: 600;
@@ -386,29 +323,26 @@ button, input, select {
 .vu-meter {
   display: flex;
   gap: 3px;
-  height: 22px;
+  height: 20px;
 }
 
 .vu-segment {
   flex: 1;
-  border-radius: 2px;
-  background: #1c2230;
-  transition: background var(--transition), box-shadow var(--transition);
+  border-radius: 1px;
+  background: #151515;
+  transition: background var(--transition);
 }
 
 .vu-segment.is-lit-green {
   background: var(--success);
-  box-shadow: 0 0 6px rgba(46, 204, 113, .55);
 }
 
 .vu-segment.is-lit-yellow {
   background: var(--gold);
-  box-shadow: 0 0 6px rgba(252, 195, 50, .55);
 }
 
 .vu-segment.is-lit-red {
   background: var(--danger);
-  box-shadow: 0 0 6px rgba(230, 57, 70, .6);
 }
 
 .gain-row {
@@ -419,7 +353,7 @@ button, input, select {
 }
 
 .gain-row label {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -434,25 +368,17 @@ button, input, select {
    ===================================================== */
 .progress-track {
   width: 100%;
-  height: 9px;
-  background: #1c2230;
-  border-radius: 5px;
+  height: 6px;
+  background: #151515;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   width: 0%;
-  border-radius: 5px;
-  background: linear-gradient(90deg, var(--sky-blue), var(--gold));
-  background-size: 200% 100%;
-  animation: progress-shimmer 2.4s linear infinite;
+  background: var(--gold);
   transition: width .15s linear;
-}
-
-@keyframes progress-shimmer {
-  0%   { background-position: 0% 0; }
-  100% { background-position: 200% 0; }
 }
 
 /* =====================================================
@@ -462,120 +388,126 @@ button, input, select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   font-family: inherit;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
-  transition: background var(--transition), transform var(--transition), box-shadow var(--transition), opacity var(--transition);
+  transition: background var(--transition), opacity var(--transition);
 }
 
 .button-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 14px;
 }
 
 .btn-primary, .btn-danger {
-  height: 42px;
-  font-size: 13px;
+  height: 32px;
+  font-size: 12.5px;
 }
 
 .btn-primary {
   background: var(--gold);
-  color: var(--primary);
+  color: #1e1e1e;
 }
 
 .btn-primary:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(252, 195, 50, .35);
+  background: var(--gold-dim);
 }
 
 .btn-danger {
   background: var(--danger);
-  color: var(--white);
+  color: #ffffff;
 }
 
 .btn-danger:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(230, 57, 70, .35);
+  background: #e33c3c;
 }
 
 .btn-primary:disabled, .btn-danger:disabled {
-  opacity: .35;
+  opacity: .4;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 .btn-secondary {
-  height: 32px;
-  padding: 0 14px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
+  height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--border);
   color: var(--text);
   font-size: 11.5px;
 }
 
 .btn-secondary:hover {
-  border-color: var(--gold);
-  color: var(--gold);
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
 }
 
 .btn-icon-only {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  border-radius: 7px;
-  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  border: none;
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  transition: background var(--transition), color var(--transition);
 }
 
 .btn-icon-only:hover {
-  background: rgba(230, 57, 70, .12);
-  border-color: var(--danger);
+  background: var(--bg-hover);
   color: var(--danger);
 }
 
 /* =====================================================
-   LOG
+   OUTPUT (registro) — estilo panel de terminal/output
    ===================================================== */
-.log-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 14px 16px;
-  min-height: 160px;
-  max-height: 260px;
+.output-panel {
+  background: var(--bg-editor);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 150px;
+  max-height: 240px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.output-panel-header {
+  display: flex;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.output-tab {
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: var(--text);
+  border-bottom: 1px solid var(--gold);
+  margin-bottom: -1px;
 }
 
 .log-output {
   flex: 1;
   overflow-y: auto;
-  font-family: Consolas, monospace;
-  font-size: 11px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   color: var(--text-muted);
   white-space: pre-wrap;
 }
 
 .log-line {
-  margin-bottom: 2px;
-  animation: log-line-in .2s ease;
-}
-
-@keyframes log-line-in {
-  from { opacity: 0; transform: translateX(-4px); }
-  to   { opacity: 1; transform: translateX(0); }
+  line-height: 1.6;
 }
 
 /* =====================================================
@@ -606,11 +538,11 @@ button, input, select {
 .field input[type='text'],
 .field input[type='password'],
 .field select {
-  height: 34px;
-  padding: 0 12px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 7px;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input);
+  border-radius: var(--radius);
   color: var(--text);
   font-size: 12.5px;
 }
@@ -631,14 +563,12 @@ button, input, select {
 
 .checkbox-label input[type='checkbox'] {
   accent-color: var(--gold);
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 /* =====================================================
-   SELECTOR DE PISTA (intro/outro activo) — reemplaza un
-   <select> nativo para poder mostrar nombre + duracion de
-   cada pista con claridad antes de elegirla.
+   SELECTOR DE PISTA (track picker)
    ===================================================== */
 .track-picker {
   position: relative;
@@ -646,14 +576,14 @@ button, input, select {
 
 .track-picker-trigger {
   width: 100%;
-  height: 34px;
+  height: 30px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px 0 12px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 7px;
+  padding: 0 8px 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--bg-input);
+  border-radius: var(--radius);
   color: var(--text);
   font-family: inherit;
   font-size: 12.5px;
@@ -662,7 +592,7 @@ button, input, select {
 }
 
 .track-picker-trigger:hover:not(:disabled) {
-  border-color: var(--gold);
+  border-color: var(--text-muted);
 }
 
 .track-picker-trigger:disabled {
@@ -703,42 +633,41 @@ button, input, select {
 
 .track-picker-menu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 4px);
   left: 0;
   right: 0;
   z-index: 30;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
   max-height: 240px;
   overflow-y: auto;
-  padding: 6px;
-  animation: view-fade-in .15s ease;
+  padding: 4px;
 }
 
 .track-picker-option {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
 }
 
 .track-picker-option:hover {
-  background: rgba(255, 255, 255, .05);
+  background: var(--bg-hover);
 }
 
 .track-picker-option.is-selected {
-  background: rgba(252, 195, 50, .1);
+  background: var(--bg-selected);
   color: var(--gold);
 }
 
 .track-picker-option-check {
-  width: 14px;
+  width: 13px;
   flex-shrink: 0;
   display: flex;
   visibility: hidden;
@@ -758,7 +687,7 @@ button, input, select {
 
 .track-picker-option-duration {
   flex-shrink: 0;
-  font-family: Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   opacity: .85;
 }
@@ -782,7 +711,7 @@ button, input, select {
 .track-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
+  gap: 8px;
   margin-top: 14px;
 }
 
@@ -792,25 +721,24 @@ button, input, select {
   color: var(--text-muted);
   padding: 14px;
   text-align: center;
-  border: 1px dashed var(--border-subtle);
-  border-radius: 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
 }
 
 .track-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 10px 12px;
-  animation: view-fade-in .2s ease;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
 }
 
 .track-item-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
   background: rgba(252, 195, 50, .1);
   color: var(--gold);
   display: flex;
@@ -828,7 +756,7 @@ button, input, select {
 
 .track-item-name {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -838,40 +766,43 @@ button, input, select {
 .track-item-meta {
   font-size: 10.5px;
   color: var(--text-muted);
-  font-family: Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 /* =====================================================
    INFORMACION
    ===================================================== */
-.about-card {
+.about-panel {
   display: flex;
-  gap: 20px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  padding: 24px;
+  gap: 18px;
+  padding: 22px;
   max-width: 640px;
 }
 
 .about-mark {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
   background: linear-gradient(135deg, var(--primary), var(--primary-light));
   color: var(--gold);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 800;
-  font-size: 22px;
+  font-weight: 700;
+  font-size: 18px;
   flex-shrink: 0;
+}
+
+.about-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .about-text h3 {
   margin: 0 0 4px 0;
-  font-size: 16px;
-  color: var(--white);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-bright);
 }
 
 .about-desc {
@@ -882,10 +813,67 @@ button, input, select {
 }
 
 /* =====================================================
+   STATUS BAR
+   ===================================================== */
+.status-bar {
+  height: 22px;
+  flex-shrink: 0;
+  background: var(--primary);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 11px;
+  transition: background var(--transition);
+}
+
+.status-bar.is-live {
+  background: #a1260d;
+}
+
+.status-bar-group {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.status-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+}
+
+.status-bar-mono {
+  font-family: var(--font-mono);
+}
+
+.statusbar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .5);
+  flex-shrink: 0;
+}
+
+.statusbar-dot.is-live {
+  background: #ffffff;
+  animation: onair-pulse-soft 1.2s ease-in-out infinite;
+}
+
+.statusbar-dot.is-connecting {
+  background: var(--gold);
+  animation: onair-pulse-soft 1s ease-in-out infinite;
+}
+
+/* =====================================================
    SCROLLBAR
    ===================================================== */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -893,73 +881,33 @@ button, input, select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
-  border-radius: 4px;
+  background: rgba(121, 121, 121, .4);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-light);
+  background: rgba(121, 121, 121, .6);
 }
 
 /* =====================================================
-   RESPONSIVE — el sidebar se colapsa a solo iconos y las
-   grillas de contenido pasan a una columna en ventanas
-   angostas (la app permite redimensionar hasta 640px).
+   RESPONSIVE
    ===================================================== */
-@media (max-width: 880px) {
-  .sidebar {
-    width: 72px;
-    padding: 20px 10px;
-  }
-
-  .sidebar-brand {
-    justify-content: center;
-    padding: 4px 0 20px;
-  }
-
-  .brand-text {
-    display: none;
-  }
-
-  .nav-item {
-    justify-content: center;
-    padding: 12px 0;
-  }
-
-  .nav-item span:not(.nav-icon) {
-    display: none;
-  }
-
-  .sidebar-footer {
-    text-align: center;
-  }
-
-  .sidebar-version {
-    display: none;
-  }
-}
-
 @media (max-width: 680px) {
   .config-grid {
     grid-template-columns: 1fr;
     max-width: none;
   }
 
-  .onair-hero {
+  .onair-panel {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .onair-display {
-    align-items: flex-start;
-    width: 100%;
-  }
-
-  .onair-timer {
-    font-size: 28px;
-  }
-
-  .about-card {
+  .about-panel {
     flex-direction: column;
+  }
+
+  .status-bar-item-gain,
+  .status-bar-item-version {
+    display: none;
   }
 }

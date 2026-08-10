@@ -158,10 +158,10 @@ function decodeToPcm(filePath) {
  */
 function playTimedPcm(buffer, { onChunk, onProgress, cutoffSeconds }) {
   const durationSeconds = buffer.length / BYTES_PER_SECOND;
-  const chunkBytes = Math.max(4, Math.floor(BYTES_PER_SECOND * (CHUNK_MS / 1000) / 4) * 4);
   let cursor = 0;
   let stopped = false;
   let timeoutHandle = null;
+  const startTime = Date.now();
 
   const promise = new Promise((resolve) => {
     function tick() {
@@ -169,21 +169,41 @@ function playTimedPcm(buffer, { onChunk, onProgress, cutoffSeconds }) {
         resolve({ cutoff: false, aborted: true });
         return;
       }
-      if (cursor >= buffer.length) {
-        onProgress(durationSeconds, durationSeconds);
-        resolve({ cutoff: false, aborted: false });
-        return;
-      }
-      const elapsed = cursor / BYTES_PER_SECOND;
-      if (cutoffSeconds != null && elapsed >= cutoffSeconds) {
+
+      // Los bytes a enviar se calculan segun el TIEMPO REAL transcurrido
+      // (Date.now() - startTime), no segun un contador fijo de "ticks" de
+      // CHUNK_MS. setTimeout en Node no garantiza precision: si el event
+      // loop se congestiona un momento (GC, IPC, disco), un tick puede
+      // llegar tarde. Con un chunk de tamano fijo por tick, ese retraso se
+      // traduce en un hueco real de audio (silencio/corte) porque el
+      // encoder se queda sin datos mientras tanto. Calculando el objetivo
+      // por tiempo real, el siguiente tick manda un chunk mas grande para
+      // "ponerse al dia", sin dejar huecos.
+      const elapsedReal = (Date.now() - startTime) / 1000;
+
+      if (cutoffSeconds != null && elapsedReal >= cutoffSeconds) {
         resolve({ cutoff: true, aborted: false });
         return;
       }
-      const end = Math.min(cursor + chunkBytes, buffer.length);
-      const chunk = buffer.subarray(cursor, end);
-      onChunk(chunk);
-      cursor = end;
-      onProgress(cursor / BYTES_PER_SECOND, durationSeconds);
+
+      let targetBytes = Math.floor((elapsedReal * BYTES_PER_SECOND) / 4) * 4;
+      targetBytes = Math.min(targetBytes, buffer.length);
+      if (cutoffSeconds != null) {
+        const cutoffBytes = Math.floor((cutoffSeconds * BYTES_PER_SECOND) / 4) * 4;
+        targetBytes = Math.min(targetBytes, cutoffBytes);
+      }
+
+      if (targetBytes > cursor) {
+        onChunk(buffer.subarray(cursor, targetBytes));
+        cursor = targetBytes;
+        onProgress(cursor / BYTES_PER_SECOND, durationSeconds);
+      }
+
+      if (cursor >= buffer.length) {
+        resolve({ cutoff: false, aborted: false });
+        return;
+      }
+
       timeoutHandle = setTimeout(tick, CHUNK_MS);
     }
     tick();
@@ -311,8 +331,34 @@ async function startStream(mainWindow, rawConfig) {
     stopRequested: false,
     statusTimer: null,
     introController: null,
-    outroController: null
+    outroController: null,
+    introPcmPromise: null,
+    outroPcmPromise: null
   };
+
+  // Pre-decodificar intro/outro a PCM EN PARALELO (intro: mientras se
+  // confirma la conexion; outro: durante toda la sesion), para que cuando
+  // de verdad haga falta reproducirlos ya esten listos en memoria. Esto
+  // evita el hueco de silencio entre "el vivo termina" y "el outro empieza
+  // a sonar" que antes se generaba mientras ffmpeg decodificaba el archivo.
+  if (config.introEnabled && config.introTrackId) {
+    const introPathEarly = libraryManager.getTrackPath(config.introTrackId);
+    if (introPathEarly) {
+      session.introPcmPromise = decodeToPcm(introPathEarly).catch((err) => {
+        sendLog(mainWindow, `Aviso: no se pudo pre-cargar el intro (${err.message}).`);
+        return null;
+      });
+    }
+  }
+  if (config.outroEnabled && config.outroTrackId) {
+    const outroPathEarly = libraryManager.getTrackPath(config.outroTrackId);
+    if (outroPathEarly) {
+      session.outroPcmPromise = decodeToPcm(outroPathEarly).catch((err) => {
+        sendLog(mainWindow, `Aviso: no se pudo pre-cargar el outro (${err.message}).`);
+        return null;
+      });
+    }
+  }
 
   wireEncoderProcessEvents(mainWindow, encoderProcess);
 
@@ -348,7 +394,10 @@ async function runIntroThenLive(mainWindow) {
       sendStatus(mainWindow, 'intro', elapsedSeconds());
       sendLog(mainWindow, 'Decodificando intro...');
       try {
-        const pcm = await decodeToPcm(introPath);
+        let pcm = session.introPcmPromise ? await session.introPcmPromise : null;
+        if (!pcm) {
+          pcm = await decodeToPcm(introPath);
+        }
         if (!session || session.stopRequested) return;
         sendLog(mainWindow, 'Reproduciendo intro...');
         const { promise, abort } = playTimedPcm(pcm, {
@@ -386,12 +435,28 @@ function beginLiveCapture(mainWindow) {
   }
   session.inputStream = inputStream;
 
+  // Limitar el envio de nivel de vumetro por IPC (no en cada callback de
+  // audio, que puede llegar decenas de veces por segundo). Mandar un
+  // mensaje IPC en cada callback compite por el mismo hilo de JS que debe
+  // seguir escribiendole al pipe de ffmpeg a tiempo real; si ese hilo se
+  // atrasa, naudiodon puede terminar reenviando/repitiendo audio del
+  // buffer interno para compensar, lo que se escucha como un eco/repeticion
+  // en la transmision. 15 actualizaciones/seg siguen siendo fluidas para el
+  // ojo humano y le quitan presion al hot path de audio.
+  const VU_EMIT_INTERVAL_MS = 66;
+  let lastVuEmit = 0;
+
   inputStream.on('data', (chunk) => {
     if (!session || session.phase !== 'live') return;
     const gained = applyGain(chunk, session.gain);
     writeToEncoder(gained);
-    const { peak, db } = computePeakDb(gained);
-    sendVuLevel(mainWindow, peak, db);
+
+    const now = Date.now();
+    if (now - lastVuEmit >= VU_EMIT_INTERVAL_MS) {
+      lastVuEmit = now;
+      const { peak, db } = computePeakDb(gained);
+      sendVuLevel(mainWindow, peak, db);
+    }
   });
 
   inputStream.on('error', (err) => {
@@ -422,23 +487,35 @@ async function stopStream(mainWindow) {
   }
 
   if (phaseAtStop === 'live') {
+    // Cambiar de fase ANTES de detener la captura: el guard del handler
+    // 'data' de audio (`session.phase !== 'live'`) debe bloquear cualquier
+    // callback que naudiodon dispare durante su propio apagado. Algunos
+    // bindings nativos de audio entregan un ultimo bloque que puede
+    // duplicar contenido ya enviado justo al cerrar el stream -- eso es lo
+    // que sonaba como un eco/repeticion de la ultima palabra al detener.
+    session.phase = 'outro';
+
     if (session.inputStream) {
       try { session.inputStream.quit(() => {}); } catch { /* noop */ }
       session.inputStream = null;
     }
 
     const config = session.config;
-    let outroPath = null;
-    if (config.outroEnabled && config.outroTrackId) {
-      outroPath = libraryManager.getTrackPath(config.outroTrackId);
-    }
+    const outroConfigured = Boolean(config.outroEnabled && config.outroTrackId);
+    const outroPath = outroConfigured ? libraryManager.getTrackPath(config.outroTrackId) : null;
 
     if (outroPath) {
-      session.phase = 'outro';
       sendStatus(mainWindow, 'outro', elapsedSeconds());
       sendLog(mainWindow, `Reproduciendo outro; la conexion se cerrara ${OUTRO_CUTOFF_SECONDS}s antes de que termine.`);
       try {
-        const pcm = await decodeToPcm(outroPath);
+        // Preferir el buffer pre-decodificado en paralelo (ver startStream):
+        // si ya esta listo, la reproduccion arranca sin ningun hueco de
+        // silencio. Si por algo fallo o no alcanzo a resolver, se decodifica
+        // ahora como respaldo.
+        let pcm = session.outroPcmPromise ? await session.outroPcmPromise : null;
+        if (!pcm) {
+          pcm = await decodeToPcm(outroPath);
+        }
         const durationSeconds = pcm.length / BYTES_PER_SECOND;
         const cutoffSeconds = Math.max(0, durationSeconds - OUTRO_CUTOFF_SECONDS);
         const { promise, abort } = playTimedPcm(pcm, {
@@ -470,17 +547,59 @@ async function stopStream(mainWindow) {
 function teardownSession(mainWindow, finalStatusKind) {
   return new Promise((resolve) => {
     stopStatusTicker();
-    if (session && session.encoderProcess) {
-      const proc = session.encoderProcess;
-      try {
-        if (proc.stdin && !proc.stdin.destroyed) proc.stdin.end();
-      } catch { /* noop */ }
-      try { proc.kill(); } catch { /* noop */ }
-    }
+    const proc = session ? session.encoderProcess : null;
     session = null;
-    sendStatus(mainWindow, finalStatusKind, 0);
-    sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
-    resolve();
+
+    function finish() {
+      sendStatus(mainWindow, finalStatusKind, 0);
+      sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
+      resolve();
+    }
+
+    if (!proc || proc.exitCode !== null) {
+      finish();
+      return;
+    }
+
+    // IMPORTANTE: no matar el proceso de inmediato. Si lo matamos (SIGTERM)
+    // al mismo tiempo que cerramos stdin, ffmpeg no alcanza a vaciar el
+    // encoder ni a cerrar la conexion TCP hacia Icecast de forma limpia.
+    // Zeno.fm interpreta ese corte abrupto quedandose con el ultimo trozo
+    // de audio en su buffer y lo repite en bucle para los oyentes durante
+    // varios segundos hasta que detecta que la fuente ya no responde. Por
+    // eso: cerramos stdin (EOF), le damos un plazo para que termine solo
+    // (lo cual manda un cierre de conexion correcto), y solo si no sale a
+    // tiempo lo forzamos como ultimo recurso.
+    let settled = false;
+    const graceTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill(); } catch { /* noop */ }
+      finish();
+    }, 2500);
+
+    proc.once('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(graceTimer);
+      finish();
+    });
+
+    try {
+      if (proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.end();
+      } else {
+        clearTimeout(graceTimer);
+        settled = true;
+        try { proc.kill(); } catch { /* noop */ }
+        finish();
+      }
+    } catch {
+      clearTimeout(graceTimer);
+      settled = true;
+      try { proc.kill(); } catch { /* noop */ }
+      finish();
+    }
   });
 }
 

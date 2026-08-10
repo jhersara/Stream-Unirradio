@@ -5,13 +5,11 @@
 const VU_SEGMENT_COUNT = 28;
 
 const els = {
-  // Sidebar
-  sidebarVersion: document.getElementById('sidebar-version'),
-  navItems: Array.from(document.querySelectorAll('.nav-item')),
+  // Activity bar
+  navItems: Array.from(document.querySelectorAll('.activity-item')),
   views: Array.from(document.querySelectorAll('.view')),
 
   // Estudio
-  onairBadge: document.getElementById('onair-badge'),
   onairDot: document.getElementById('onair-dot'),
   onairStatus: document.getElementById('onair-status'),
   onairSubstatus: document.getElementById('onair-substatus'),
@@ -52,7 +50,15 @@ const els = {
   trackList: document.getElementById('track-list'),
 
   // Informacion
-  aboutVersion: document.getElementById('about-version')
+  aboutVersion: document.getElementById('about-version'),
+
+  // Status bar
+  statusBar: document.getElementById('status-bar'),
+  statusbarDot: document.getElementById('statusbar-dot'),
+  statusbarText: document.getElementById('statusbar-text'),
+  statusbarTimer: document.getElementById('statusbar-timer'),
+  statusbarGain: document.getElementById('statusbar-gain'),
+  statusbarVersion: document.getElementById('statusbar-version')
 };
 
 let libraryCache = { tracks: [] };
@@ -63,7 +69,7 @@ let libraryCache = { tracks: [] };
 function paintIcons(root = document) {
   root.querySelectorAll('[data-icon]').forEach((el) => {
     const name = el.getAttribute('data-icon');
-    el.innerHTML = window.renderIcon(name, el.classList.contains('nav-icon') ? 18 : 15);
+    el.innerHTML = window.renderIcon(name, el.classList.contains('activity-icon') ? 20 : 15);
   });
 }
 
@@ -72,7 +78,7 @@ function paintIcons(root = document) {
 // ---------------------------------------------------------------------------
 function switchView(viewName) {
   els.navItems.forEach((btn) => {
-    btn.classList.toggle('nav-item-active', btn.dataset.view === viewName);
+    btn.classList.toggle('activity-item-active', btn.dataset.view === viewName);
   });
   els.views.forEach((section) => {
     section.classList.toggle('view-active', section.dataset.viewPanel === viewName);
@@ -154,22 +160,27 @@ function appendLog(message, timestamp) {
 // Estado "en vivo" (hero)
 // ---------------------------------------------------------------------------
 const STATUS_PRESETS = {
-  idle: { dotClass: '', badgeClass: '', text: 'Desconectado', sub: 'Listo para transmitir' },
-  connecting: { dotClass: 'is-connecting', badgeClass: 'is-connecting', text: 'Conectando...', sub: 'Estableciendo conexion con el servidor' },
-  intro: { dotClass: 'is-connecting', badgeClass: 'is-connecting', text: 'Reproduciendo Intro', sub: 'La transmision en vivo comienza al terminar' },
-  live: { dotClass: 'is-live', badgeClass: 'is-live', text: 'En Vivo', sub: 'Transmitiendo audio en tiempo real' },
-  outro: { dotClass: 'is-connecting', badgeClass: 'is-connecting', text: 'Reproduciendo Outro', sub: 'La conexion se cerrara 2s antes de que termine' },
-  error: { dotClass: 'is-live', badgeClass: 'is-live', text: 'Error de Conexion', sub: 'Revisa el registro de actividad' }
+  idle: { dotClass: '', text: 'Desconectado', sub: 'Listo para transmitir' },
+  connecting: { dotClass: 'is-connecting', text: 'Conectando...', sub: 'Estableciendo conexion con el servidor' },
+  intro: { dotClass: 'is-connecting', text: 'Reproduciendo Intro', sub: 'La transmision en vivo comienza al terminar' },
+  live: { dotClass: 'is-live', text: 'En Vivo', sub: 'Transmitiendo audio en tiempo real' },
+  outro: { dotClass: 'is-connecting', text: 'Reproduciendo Outro', sub: 'La conexion se cerrara 2s antes de que termine' },
+  error: { dotClass: 'is-live', text: 'Error de Conexion', sub: 'Revisa el registro de actividad' }
 };
 
 function setOnAirState(kind, elapsedSeconds) {
   const preset = STATUS_PRESETS[kind] || STATUS_PRESETS.idle;
   els.onairDot.className = `onair-dot ${preset.dotClass}`.trim();
-  els.onairBadge.className = `onair-badge ${preset.badgeClass}`.trim();
   els.onairStatus.textContent = preset.text;
   els.onairSubstatus.textContent = preset.sub;
+
+  els.statusbarDot.className = `statusbar-dot ${preset.dotClass}`.trim();
+  els.statusbarText.textContent = preset.text;
+  els.statusBar.classList.toggle('is-live', kind === 'live' || kind === 'error');
+
   if (typeof elapsedSeconds === 'number') {
     els.onairTimer.textContent = formatClock(elapsedSeconds);
+    els.statusbarTimer.textContent = formatClock(elapsedSeconds);
   }
 }
 
@@ -180,7 +191,7 @@ function setOnAirState(kind, elapsedSeconds) {
 // a la derecha dentro de un <select> normal. Aqui cada fila del menu
 // desplegable muestra ambas cosas antes de elegir.
 // ---------------------------------------------------------------------------
-function createTrackPicker(root, trigger, menu) {
+function createTrackPicker(root, trigger, menu, onChange) {
   const textEl = trigger.querySelector('.track-picker-trigger-text');
   const durationEl = trigger.querySelector('.track-picker-trigger-duration');
   let currentTracks = [];
@@ -202,6 +213,7 @@ function createTrackPicker(root, trigger, menu) {
     close();
     renderTrigger();
     renderMenu();
+    if (onChange) onChange(id);
   }
 
   function renderTrigger() {
@@ -263,6 +275,11 @@ function createTrackPicker(root, trigger, menu) {
       renderTrigger();
       renderMenu();
     },
+    setValue(id) {
+      selectedId = currentTracks.some((t) => t.id === id) ? id : '';
+      renderTrigger();
+      renderMenu();
+    },
     getValue() {
       return selectedId;
     },
@@ -273,12 +290,14 @@ function createTrackPicker(root, trigger, menu) {
 const introPicker = createTrackPicker(
   document.getElementById('picker-intro'),
   document.getElementById('picker-intro-trigger'),
-  document.getElementById('picker-intro-menu')
+  document.getElementById('picker-intro-menu'),
+  () => persistSettings()
 );
 const outroPicker = createTrackPicker(
   document.getElementById('picker-outro'),
   document.getElementById('picker-outro-trigger'),
-  document.getElementById('picker-outro-menu')
+  document.getElementById('picker-outro-menu'),
+  () => persistSettings()
 );
 
 // Cualquier click fuera de un picker abierto lo cierra.
@@ -381,7 +400,7 @@ async function loadDevices() {
 // ---------------------------------------------------------------------------
 async function loadAppInfo() {
   const info = await window.streamAPI.getAppInfo();
-  els.sidebarVersion.textContent = `v${info.version}`;
+  els.statusbarVersion.textContent = `v${info.version}`;
   els.aboutVersion.textContent = `Version ${info.version}`;
 }
 
@@ -390,14 +409,18 @@ async function loadAppInfo() {
 // ---------------------------------------------------------------------------
 els.gainSlider.addEventListener('input', () => {
   els.gainValue.textContent = `${els.gainSlider.value}%`;
+  els.statusbarGain.textContent = `Ganancia ${els.gainSlider.value}%`;
   window.streamAPI.setGain(Number(els.gainSlider.value) / 100);
 });
+els.gainSlider.addEventListener('change', () => persistSettings());
 
 // ---------------------------------------------------------------------------
-// Iniciar / Detener
+// Configuracion persistida (servidor, credenciales, dispositivo, pistas
+// activas): se guarda sola cada vez que un campo cambia, para que el
+// usuario no tenga que volver a escribirla cada vez que abre la app.
 // ---------------------------------------------------------------------------
-els.btnStart.addEventListener('click', async () => {
-  const config = {
+function currentConfig() {
+  return {
     server: els.servidor.value.trim(),
     port: els.puerto.value.trim(),
     mount: els.punto.value.trim(),
@@ -410,6 +433,43 @@ els.btnStart.addEventListener('click', async () => {
     outroTrackId: outroPicker.getValue(),
     gain: Number(els.gainSlider.value) / 100
   };
+}
+
+function persistSettings() {
+  window.streamAPI.saveSettings(currentConfig());
+}
+
+function applySettings(settings) {
+  if (!settings) return;
+  els.servidor.value = settings.server ?? '';
+  els.puerto.value = settings.port ?? '';
+  els.punto.value = settings.mount ?? '';
+  els.usuario.value = settings.user ?? '';
+  els.password.value = settings.password ?? '';
+  if (settings.deviceId) els.device.value = settings.deviceId;
+  els.checkIntro.checked = settings.introEnabled !== false;
+  els.checkOutro.checked = settings.outroEnabled !== false;
+  introPicker.setValue(settings.introTrackId || '');
+  outroPicker.setValue(settings.outroTrackId || '');
+  if (typeof settings.gain === 'number') {
+    const pct = Math.round(settings.gain * 100);
+    els.gainSlider.value = pct;
+    els.gainValue.textContent = `${pct}%`;
+    els.statusbarGain.textContent = `Ganancia ${pct}%`;
+  }
+}
+
+[
+  els.servidor, els.puerto, els.punto, els.usuario, els.password, els.device
+].forEach((el) => el.addEventListener('change', () => persistSettings()));
+els.checkIntro.addEventListener('change', () => persistSettings());
+els.checkOutro.addEventListener('change', () => persistSettings());
+
+// ---------------------------------------------------------------------------
+// Iniciar / Detener
+// ---------------------------------------------------------------------------
+els.btnStart.addEventListener('click', async () => {
+  const config = currentConfig();
 
   if (!config.server || !config.port || !config.mount || !config.user || !config.password) {
     window.SoundFX.error();
@@ -417,6 +477,7 @@ els.btnStart.addEventListener('click', async () => {
     return;
   }
 
+  persistSettings();
   window.SoundFX.start();
   els.btnStart.disabled = true;
   els.btnStop.disabled = false;
@@ -491,9 +552,18 @@ window.streamAPI.onOutroProgress((payload) => {
 // ---------------------------------------------------------------------------
 // Arranque
 // ---------------------------------------------------------------------------
-paintIcons();
-buildVuMeter();
-loadDevices();
-loadLibrary();
-loadAppInfo();
-appendLog('Interfaz cargada.');
+async function bootstrap() {
+  paintIcons();
+  buildVuMeter();
+  await loadDevices();
+  await loadLibrary();
+  // La configuracion guardada se aplica DESPUES de cargar la biblioteca:
+  // los pickers de intro/outro necesitan sus opciones (setTracks) listas
+  // antes de poder marcar el track guardado como seleccionado (setValue).
+  const settings = await window.streamAPI.loadSettings();
+  applySettings(settings);
+  await loadAppInfo();
+  appendLog('Interfaz cargada.');
+}
+
+bootstrap();

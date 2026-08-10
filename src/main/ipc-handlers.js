@@ -2,6 +2,7 @@ const { ipcMain, dialog, app } = require('electron');
 const libraryManager = require('./library-manager');
 const ffmpegStream = require('./ffmpeg-stream');
 const audioCapture = require('./audio-capture');
+const settingsStore = require('./settings-store');
 const { sendLog } = require('./ipc-events');
 
 /**
@@ -79,6 +80,18 @@ function registerIpcHandlers(mainWindow) {
 
   ipcMain.handle('library:delete', async (event, id) => {
     return libraryManager.deleteTrack(id);
+  });
+
+  // ---------------------------------------------------------------------
+  // Configuracion persistida (servidor, credenciales, pistas activas)
+  // ---------------------------------------------------------------------
+  ipcMain.handle('settings:load', async () => {
+    return settingsStore.loadSettings();
+  });
+
+  ipcMain.handle('settings:save', async (event, settings) => {
+    settingsStore.saveSettings(settings);
+    return { ok: true };
   });
 
   // ---------------------------------------------------------------------

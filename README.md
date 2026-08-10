@@ -59,12 +59,17 @@ requisitos a implementar):
    catálogo).
 9. **Navegación por secciones.** Barra lateral con 4 secciones: Estudio (dashboard principal),
    Biblioteca, Configuración, Información (about/versión de la app).
-10. **Identidad visual UNIR Radio.** Paleta tomada directamente de `../../styles/UI.css` del
-    sitio principal (no inventada): Rich Black `#03060f`, Navbar Blue `#13294B` / hover
-    `#1d4179`, Gold `#fcc332`, Sky Blue `#6ea8fe`, texto `#e9edf5`. Tipografía Poppins (Google
-    Fonts). Iconos de línea minimalista escritos a mano en `src/renderer/icons.js` (estilo
-    Lucide/Feather) para no depender de un bundler en el renderer; se pueden reemplazar por
-    `lucide-static` más adelante sin tocar el resto del código.
+10. **Identidad visual: estilo Visual Studio Code (Dark+) con acentos UNIR Radio.** A pedido
+    explícito del usuario, se reemplazó el tema "SaaS card" (paleta completa del sitio +
+    Poppins + Orbitron) por la estética estructural de VS Code: activity bar de 48px solo-
+    iconos, barra de estado inferior, paneles planos de esquinas rectas (`--radius: 3px`, sin
+    sombras/degradados), fuente del sistema (`Segoe UI` / `-apple-system`, sin Google Fonts) y
+    la paleta neutra real de VS Code Dark+ (`#1e1e1e` editor, `#252526` paneles, `#333333`
+    activity bar, `#3c3c3c` bordes/inputs). El navy `#13294B`/`#1d4179` y el gold `#fcc332` de
+    UNIR Radio se conservan como ACENTO (marca en el activity bar, botón principal, foco,
+    estado "en vivo") en vez del azul `#007acc` por defecto de VS Code — mismo patrón que usan
+    los temas de VS Code que recolorean el acento sin tocar la estructura. Iconos de línea
+    minimalista escritos a mano en `src/renderer/icons.js` (estilo Lucide/Feather), sin cambios.
 
 ---
 
@@ -147,13 +152,87 @@ recompila los módulos nativos específicamente contra el ABI de Electron.
       compilado y funcionando, `ffmpeg.exe` presente en `resources/ffmpeg/`. Solo falta la
       prueba en si contra Zeno.fm con credenciales reales.
 
+### Correcciones post-prueba real (confirmadas por el usuario transmitiendo)
+
+Primera tanda de problemas reportados tras la primera transmisión real:
+
+1. **Bucle de 3-6s repitiendose al final de cada transmisión.** Causa: `teardownSession`
+   cerraba `stdin` (EOF) y llamaba `proc.kill()` casi al mismo tiempo, sin darle tiempo a ffmpeg
+   de vaciar el encoder ni cerrar la conexión TCP hacia Icecast de forma limpia. Zeno.fm
+   interpretaba ese corte abrupto quedándose con el último fragmento en su buffer y
+   repitiéndolo para los oyentes hasta detectar que la fuente ya no respondía. **Fix:** ahora se
+   cierra `stdin` y se espera (hasta 2.5s) a que ffmpeg termine solo -> eso sí manda un cierre de
+   conexión correcto; solo se fuerza `kill()` si no sale a tiempo.
+2. **Eco/repetición de voz y audio durante la transmisión en vivo (aparte del delay normal).**
+   Causa más probable: se mandaba un evento IPC (`stream:vu-level`) en CADA callback de audio de
+   `naudiodon` (decenas de veces por segundo), compitiendo por el mismo hilo de JS que debe
+   seguir escribiendo al pipe de ffmpeg a tiempo real; si ese hilo se atrasaba, `naudiodon` podía
+   reenviar/repetir audio de su buffer interno para compensar. **Fix:** el envío de nivel de
+   vumetro se limitó a ~15 veces/seg en vez de en cada callback.
+
+### Segunda tanda de correcciones (tras probar de nuevo)
+
+El usuario reportó tres problemas mas especificos despues de la primera ronda de fixes:
+
+3. **Retraso de 10-12s entre "Iniciar" y que los oyentes escuchen algo — el intro casi no se
+   alcanza a oir.** Diagnóstico: esto **no es un bug de la app**. Coincide con el mismo patrón
+   de buffering/switchover de Zeno.fm ya documentado antes (ver Notas de contexto): la
+   plataforma tarda varios segundos en detectar la fuente en vivo y cortar su programación
+   automática/AutoDJ para pasar a ella. No es corregible desde el código del source client.
+   **Workaround operativo:** dejar unos segundos de "colchón" (silencio o musica) al principio
+   del intro antes del contenido importante, para que la voz no se pierda en la ventana de
+   switchover.
+4. **"Se cortaba por partes" durante el outro (audio entrecortado, con huecos).** Causa real:
+   `playTimedPcm` mandaba un chunk de tamaño FIJO cada `CHUNK_MS` (50ms) via `setTimeout`, pero
+   `setTimeout` en Node no garantiza precision — si el event loop se congestionaba un momento
+   (decode de audio, IPC, GC), un tick llegaba tarde y el encoder se quedaba sin datos durante
+   ese hueco real. **Fix:** reescrito para calcular cuantos bytes enviar segun el TIEMPO REAL
+   transcurrido (no un contador de ticks); si un tick se atrasa, el siguiente manda un chunk mas
+   grande para ponerse al dia, sin dejar huecos.
+5. **El "hola" (audio en vivo) se repitió justo al cortar, antes de que empezara el outro.**
+   Causa: en `stopStream`, la fase de la sesión (`session.phase`) solo cambiaba de `'live'` a
+   `'outro'` DESPUES de terminar de decodificar el archivo de outro — durante esa ventana,
+   `session.phase` seguia siendo `'live'`, asi que si `naudiodon` entregaba un ultimo bloque de
+   audio duplicado al cerrar el stream (comportamiento conocido de algunos bindings nativos de
+   audio al hacer `.quit()`), ese bloque igual se escribia al encoder. **Fix:** la fase cambia a
+   `'outro'` ANTES de llamar `inputStream.quit()`, asi el guard del handler de audio bloquea
+   cualquier callback tardio de inmediato.
+6. **~5s de silencio en la programación de Zeno al volver del corte.** Este es comportamiento
+   del lado de Zeno (su AutoDJ tarda en detectar que la fuente se desconectó y retomar), no
+   controlable desde aca; debería mejorar algo con el fix #1 de la primera tanda (cierre
+   limpio) pero seguramente no desaparezca del todo — es la contraparte del mismo mecanismo de
+   switchover del punto 3.
+7. **Optimización adicional:** intro y outro ahora se pre-decodifican a PCM EN PARALELO (intro:
+   mientras se confirma la conexión; outro: durante toda la sesión en vivo) en vez de
+   decodificarse en el momento en que hacen falta. Esto reduce aun mas el hueco de silencio
+   entre "el vivo termina" y "el outro empieza a sonar".
+- [ ] **Pendiente de confirmar por el usuario** que los puntos 4 y 5 (los dos corregibles desde
+      el código) ya no ocurren en una prueba real.
+
+### Configuración persistida (credenciales, dispositivo, pistas activas)
+
+A pedido del usuario: todos los campos de Configuración (servidor, puerto, mountpoint, usuario,
+dispositivo de entrada, intro/outro activos, ganancia) se guardan solos cada vez que cambian, y
+se restauran automáticamente al abrir la app — ya no hay que volver a escribirlos cada sesión.
+
+- [x] Nuevo módulo `src/main/settings-store.js`: guarda `settings.json` en
+      `app.getPath('userData')`. La contraseña se cifra por separado con `safeStorage` (DPAPI en
+      Windows) antes de guardarse — no queda en texto plano en el archivo.
+- [x] Canales IPC `settings:load` / `settings:save` (`ipc-handlers.js`, `preload.js`).
+- [x] `renderer.js`: `applySettings()` al arrancar (después de cargar la biblioteca, para que
+      los pickers de intro/outro puedan marcar la pista guardada), `persistSettings()` en cada
+      cambio de campo relevante (`change` en inputs/selects/checkboxes, selección en los
+      pickers, `change` del slider de ganancia).
+
 ## Fase 3 — Interfaz (renderer) — REDISEÑO COMPLETO
 
 Rediseño total sobre el layout inicial de dos paneles: ahora es una app de navegación lateral
 con 4 vistas, siguiendo las especificaciones funcionales #5-#10.
 
-- [x] Barra de navegación lateral con 4 secciones: Estudio, Biblioteca, Configuración,
-      Información (router simple por `data-view` / `data-view-panel`, sin dependencias).
+- [x] **Activity bar** (estilo VS Code) con 4 secciones: Estudio, Biblioteca, Configuración,
+      Información. 48px, solo iconos con tooltip (`title=`), indicador de sección activa como
+      barra vertical dorada de 2px en el borde izquierdo del icono (mismo patrón que el borde
+      activo de VS Code). Router simple por `data-view` / `data-view-panel`, sin dependencias.
 - [x] Vista **Estudio**: hero "en vivo" con contador (`HH:MM:SS`) e indicador pulsante,
       vúmetro segmentado + control de ganancia, tarjetas de progreso de intro/outro, botones
       Iniciar/Detener, consola de log.
@@ -172,20 +251,25 @@ con 4 vistas, siguiendo las especificaciones funcionales #5-#10.
       `stream:intro-progress` / `stream:outro-progress`; el motor que las alimenta es Fase 2).
 - [x] Consola de log con timestamps, con animación de entrada por linea.
 - [x] Botones Iniciar/Detener con estados deshabilitados según corresponda.
-- [x] Identidad visual UNIR Radio aplicada: paleta real del sitio (`--primary #13294B`,
-      `--gold #fcc332`, `--sky-blue #6ea8fe`, fondo `--rich-black #03060f`), tipografía Poppins,
-      iconos de linea, animaciones (fade de vistas, pulso del indicador "en vivo", shimmer en
-      barras de progreso, hover en botones).
+- [x] Identidad visual: paleta neutra de VS Code Dark+ (`--bg-editor #1e1e1e`, `--bg-elevated
+      #252526`, `--bg-activitybar #333333`) con `--primary #13294B` / `--gold #fcc332` de UNIR
+      Radio como acento; fuente del sistema (`Segoe UI`) en vez de Poppins; iconos de línea sin
+      cambios. Ver especificación funcional #10 para el detalle completo de la decisión.
 - [x] Efectos de sonido de interfaz (`sound-fx.js`) enganchados a: navegación, importar/eliminar
       pista, iniciar/detener transmisión, errores de validación.
-- [x] Layout responsivo: la barra lateral se colapsa a solo iconos por debajo de 880px de ancho
-      de ventana, y las grillas de Configuración/hero pasan a una columna por debajo de 680px.
-      `minWidth` de la ventana bajado de 1050 a 640px en `main.js` para que el rango sea
-      alcanzable de verdad.
-- [x] Hero "en vivo" con estilo de panel digital: tipografía Orbitron para el contador
-      (`--font-digital`), resplandor (`text-shadow`) en los dígitos, halo radial de fondo, y el
-      indicador de estado como badge en pastilla con tinte de color según el estado
-      (conectando/en vivo).
+- [x] Layout responsivo: la activity bar ya es fija en 48px solo-iconos (no necesita colapsar,
+      a diferencia de la barra lateral con texto de la iteración anterior), y las grillas de
+      Configuración/hero pasan a una columna por debajo de 680px. `minWidth` de la ventana
+      (640px, `main.js`) sigue vigente sin cambios.
+- [x] Panel "en vivo" replanteado en estilo VS Code (reemplaza el hero de panel digital con
+      Orbitron/resplandor de la iteración anterior, ya no vigente): plano, esquinas rectas,
+      contador en `Consolas` sin efectos. El estado (punto + texto) ahora se refleja además,
+      siempre visible sin importar la vista activa, en la nueva **barra de estado** inferior.
+- [x] **Barra de estado** (nueva, estilo VS Code): franja de 22px al pie de toda la ventana —
+      punto + texto de conexión a la izquierda; ganancia, contador `HH:MM:SS` y versión de la
+      app a la derecha. Fondo `--primary` por defecto, cambia a rojo (`#a1260d`, mismo tono que
+      VS Code usa para su barra de estado en modo debug) mientras hay transmisión en vivo o
+      error. Los campos de ganancia/versión se ocultan por debajo de 680px de ancho.
 - [x] Confirmación al cerrar la ventana si hay una transmisión activa: dialogo nativo
       ("Cancelar" / "Detener y salir") en `main.js`, usando `ffmpegStream.isStreaming()`. Si el
       usuario confirma, se hace un corte de emergencia (sin outro) via `shutdown()`.
@@ -267,7 +351,7 @@ Stream-Unirradio/
     └── renderer/
         ├── index.html         # shell con sidebar + 4 vistas
         ├── renderer.js        # router de vistas, biblioteca, IPC, formato
-        ├── styles.css         # paleta UNIR Radio, animaciones
+        ├── styles.css         # estilo VS Code Dark+ con acentos UNIR Radio
         ├── icons.js           # set de iconos SVG de linea (window.renderIcon)
         └── sound-fx.js        # efectos de sonido sintetizados (window.SoundFX)
 ```
@@ -286,6 +370,9 @@ Stream-Unirradio/
 - La biblioteca de pistas se unificó (antes separaba `intros`/`outros` en el índice guardado).
   `library-manager.js` migra automáticamente el `library.json` viejo la primera vez que lo lee
   (no hace falta reimportar nada ni mover archivos a mano).
+- El estilo visual pasó de "SaaS card" (Poppins + paleta completa del sitio + Orbitron) a
+  estilo VS Code (ver especificación funcional #10) a pedido explícito del usuario. La CSP de
+  `index.html` se simplificó porque ya no se cargan fuentes externas de Google Fonts.
 - **Aviso de trabajo concurrente:** durante la sesión que implementó la Fase 2 (motor de
   streaming), se detectó que `library-manager.js`, `preload.js`, `renderer.js`, `index.html` y
   `main.js` ya habían sido modificados por otra sesión/instancia (probablemente Claude Desktop

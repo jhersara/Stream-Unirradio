@@ -1,7 +1,7 @@
 {
   "name": "stream-unirradio",
-  "productName": "Stream UNIR Radio",
-  "version": "0.4.0",
+  "productName": "Stream Radio",
+  "version": "0.5.0",
   "description": "Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast",
   "main": "src/main/main.js",
   "author": "UNIR Radio",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.unirradio.streamunirradio",
-    "productName": "Stream UNIR Radio",
+    "productName": "Stream Radio",
     "directories": {
       "output": "dist"
     },
@@ -41,7 +41,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Stream UNIR Radio"
+      "shortcutName": "Stream Radio"
     },
     "publish": [
       {

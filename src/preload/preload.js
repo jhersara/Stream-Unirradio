@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('streamAPI', {
   importTracks: () => ipcRenderer.invoke('library:import'),
   deleteTrack: (id) => ipcRenderer.invoke('library:delete', id),
 
+  // Configuracion persistida (servidor, credenciales, pistas activas)
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+
   onLog: (callback) => subscribe('stream:log', callback),
   onStatus: (callback) => subscribe('stream:status', callback),
   onVuLevel: (callback) => subscribe('stream:vu-level', callback),

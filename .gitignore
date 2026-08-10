@@ -3,3 +3,10 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Binarios de ffmpeg: pesan ~98MB cada uno. No van al repo de git (serian
+# ~295MB solo en resources/ffmpeg). electron-builder los toma directo de
+# esta carpeta LOCAL al construir el instalador (npm run dist), asi que
+# solo necesitan existir en el disco de cada maquina de desarrollo -- el
+# instalador final SI los incluye (eso va a GitHub Releases, no al repo).
+resources/ffmpeg/*.exe
