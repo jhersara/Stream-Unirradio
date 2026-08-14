@@ -141,6 +141,36 @@ button, input, select {
   justify-content: center;
 }
 
+.activity-update-badge {
+  width: 32px;
+  height: 32px;
+  margin: auto auto 12px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(252, 195, 50, .16);
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: update-badge-pulse 1.8s ease-in-out infinite;
+}
+
+.activity-update-badge:hover {
+  background: rgba(252, 195, 50, .28);
+}
+
+.activity-update-dot {
+  display: flex;
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes update-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(252, 195, 50, .35); }
+  50%      { box-shadow: 0 0 0 5px rgba(252, 195, 50, 0); }
+}
+
 /* =====================================================
    CONTENIDO / VISTAS
    ===================================================== */
@@ -404,6 +434,10 @@ button, input, select {
   margin-bottom: 14px;
 }
 
+.button-row-single {
+  grid-template-columns: max-content;
+}
+
 .btn-primary, .btn-danger {
   height: 32px;
   font-size: 12.5px;
@@ -551,6 +585,35 @@ button, input, select {
 .field select:focus {
   outline: none;
   border-color: var(--gold);
+}
+
+.mic-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.mic-test-row .btn-secondary {
+  flex-shrink: 0;
+}
+
+.mic-test-meter {
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  height: 14px;
+}
+
+.mic-test-meter .vu-segment {
+  border-radius: 1px;
+}
+
+#mic-test-db {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 11px;
+  text-align: right;
 }
 
 .checkbox-label {
@@ -770,6 +833,62 @@ button, input, select {
 }
 
 /* =====================================================
+   HISTORIAL
+   ===================================================== */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 620px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.history-item-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  background: rgba(252, 195, 50, .1);
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.history-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-item-date {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.history-item-meta {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 1px;
+}
+
+.history-item-meta.is-error {
+  color: var(--danger);
+}
+
+/* =====================================================
    INFORMACION
    ===================================================== */
 .about-panel {
@@ -810,6 +929,72 @@ button, input, select {
   color: var(--text-muted);
   line-height: 1.6;
   margin: 10px 0 0 0;
+}
+
+.about-update-status {
+  margin-top: 8px;
+  font-size: 11.5px;
+  min-height: 14px;
+}
+
+/* =====================================================
+   MODAL GENERICO (confirmar grabacion, avisos de actualizacion)
+   ===================================================== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: modal-fade-in .12s ease;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal-card {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+}
+
+.modal-title {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.modal-message {
+  margin: 0 0 18px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-actions .btn-primary,
+.modal-actions .btn-secondary,
+.modal-actions .btn-danger {
+  height: 30px;
+  padding: 0 14px;
 }
 
 /* =====================================================

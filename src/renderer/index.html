@@ -22,6 +22,9 @@
           <button type="button" class="activity-item" data-view="library" title="Biblioteca">
             <span class="activity-icon" data-icon="library"></span>
           </button>
+          <button type="button" class="activity-item" data-view="history" title="Historial">
+            <span class="activity-icon" data-icon="history"></span>
+          </button>
           <button type="button" class="activity-item" data-view="config" title="Configuracion">
             <span class="activity-icon" data-icon="settings"></span>
           </button>
@@ -29,6 +32,10 @@
             <span class="activity-icon" data-icon="info"></span>
           </button>
         </div>
+
+        <button type="button" class="activity-update-badge" id="activity-update-badge" hidden title="Actualizacion disponible">
+          <span class="activity-update-dot"></span>
+        </button>
       </nav>
 
       <!-- ==================== CONTENIDO ==================== -->
@@ -117,6 +124,16 @@
           </div>
         </section>
 
+        <!-- ---------- VISTA: HISTORIAL ---------- -->
+        <section class="view" data-view-panel="history">
+          <h2 class="view-title">Historial de Transmisiones</h2>
+          <p class="view-subtitle">Registro de las ultimas sesiones. Si una quedo grabada, puedes abrir la carpeta del archivo directamente.</p>
+
+          <div class="history-list" id="history-list">
+            <p class="track-list-empty">Todavia no hay transmisiones registradas.</p>
+          </div>
+        </section>
+
         <!-- ---------- VISTA: CONFIGURACION ---------- -->
         <section class="view" data-view-panel="config">
           <h2 class="view-title">Configuracion del Servidor</h2>
@@ -153,6 +170,13 @@
               <select id="select-device">
                 <option value="">Cargando dispositivos...</option>
               </select>
+              <div class="mic-test-row">
+                <button type="button" class="btn-secondary" id="btn-test-mic">
+                  <span class="icon-inline" data-icon="volume"></span> Probar microfono
+                </button>
+                <div class="mic-test-meter" id="mic-test-meter"></div>
+                <span class="mono-value" id="mic-test-db"></span>
+              </div>
             </div>
           </div>
 
@@ -211,6 +235,22 @@
               </p>
             </div>
           </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-header-title"><span class="icon-inline" data-icon="refresh"></span> Actualizaciones</span>
+            </div>
+            <p class="about-desc">
+              La app revisa sola si hay una version nueva publicada en GitHub cada vez que
+              arranca, y la instala al cerrar. Tambien puedes revisar manualmente aqui:
+            </p>
+            <div class="button-row button-row-single">
+              <button type="button" class="btn-secondary" id="btn-check-updates">
+                <span class="icon-inline" data-icon="refresh"></span> Buscar actualizaciones
+              </button>
+            </div>
+            <p class="mono-value about-update-status" id="update-status"></p>
+          </div>
         </section>
 
       </main>
@@ -231,6 +271,17 @@
       </div>
     </footer>
 
+  </div>
+
+  <!-- ==================== MODAL GENERICO ====================
+       Reutilizado para: confirmar grabacion al iniciar, aviso de
+       actualizacion disponible, aviso de actualizacion lista. -->
+  <div class="modal-overlay" id="app-modal-overlay" hidden>
+    <div class="modal-card">
+      <h3 class="modal-title" id="app-modal-title"></h3>
+      <p class="modal-message" id="app-modal-message"></p>
+      <div class="modal-actions" id="app-modal-actions"></div>
+    </div>
   </div>
 
   <script src="icons.js"></script>

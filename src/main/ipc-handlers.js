@@ -1,8 +1,10 @@
-const { ipcMain, dialog, app } = require('electron');
+const { ipcMain, dialog, app, shell } = require('electron');
 const libraryManager = require('./library-manager');
 const ffmpegStream = require('./ffmpeg-stream');
 const audioCapture = require('./audio-capture');
 const settingsStore = require('./settings-store');
+const autoUpdaterModule = require('./auto-updater');
+const historyStore = require('./history-store');
 const { sendLog } = require('./ipc-events');
 
 /**
@@ -27,6 +29,14 @@ function registerIpcHandlers(mainWindow) {
   ipcMain.handle('stream:set-gain', async (event, value) => {
     ffmpegStream.setGain(Number(value));
     return { ok: true };
+  });
+
+  ipcMain.handle('stream:preview-start', async (event, deviceId) => {
+    return ffmpegStream.startPreview(mainWindow, deviceId);
+  });
+
+  ipcMain.handle('stream:preview-stop', async () => {
+    return ffmpegStream.stopPreview();
   });
 
   ipcMain.handle('devices:list', async () => {
@@ -91,6 +101,31 @@ function registerIpcHandlers(mainWindow) {
 
   ipcMain.handle('settings:save', async (event, settings) => {
     settingsStore.saveSettings(settings);
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------
+  // Actualizaciones (boton manual en la vista "Informacion")
+  // ---------------------------------------------------------------------
+  ipcMain.handle('updates:check', async () => {
+    autoUpdaterModule.checkNow(mainWindow);
+    return { ok: true };
+  });
+
+  ipcMain.handle('updates:restart', async () => {
+    autoUpdaterModule.restartToUpdate();
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------
+  // Historial de transmisiones
+  // ---------------------------------------------------------------------
+  ipcMain.handle('history:list', async () => {
+    return historyStore.listSessions();
+  });
+
+  ipcMain.handle('history:reveal-recording', async (event, filePath) => {
+    if (filePath) shell.showItemInFolder(filePath);
     return { ok: true };
   });
 

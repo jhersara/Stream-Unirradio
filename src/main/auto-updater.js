@@ -1,12 +1,22 @@
+const { app } = require('electron');
 const { autoUpdater } = require('electron-updater');
-const { sendLog } = require('./ipc-events');
+const { sendLog, sendUpdateState } = require('./ipc-events');
 
 /**
  * Configura electron-updater contra los Releases de GitHub definidos en
  * package.json -> build.publish (owner: jhersara, repo: Stream-Unirradio).
- * Ademas de loguear en consola (para depuracion con DevTools), refleja el
- * estado en la consola de actividad del renderer via sendLog, para que un
- * operador sin DevTools abiertas tambien vea que esta pasando.
+ *
+ * Ademas del log de texto (consola de actividad), emite 'app:update-state'
+ * con un estado estructurado que el renderer usa para: mostrar un popup
+ * cuando hay una actualizacion disponible/lista, y dejar una insignia
+ * persistente en la barra lateral si el usuario cierra el popup sin actuar
+ * (igual patron que usa la app de escritorio de Claude).
+ *
+ * En modo desarrollo (`npm start`, sin empaquetar) NO se verifica
+ * automaticamente al arrancar: electron-updater necesita el archivo
+ * `app-update.yml` que solo genera electron-builder al empaquetar. El
+ * boton "Buscar actualizaciones" (vista Informacion) sigue funcionando en
+ * dev para poder probar el flujo manualmente si hace falta.
  */
 function initAutoUpdater(mainWindow) {
   autoUpdater.autoDownload = true;
@@ -14,34 +24,61 @@ function initAutoUpdater(mainWindow) {
 
   autoUpdater.on('checking-for-update', () => {
     console.log('[auto-updater] Buscando actualizaciones...');
+    sendLog(mainWindow, 'Buscando actualizaciones...');
+    sendUpdateState(mainWindow, { state: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
     console.log('[auto-updater] Actualizacion disponible:', info.version);
     sendLog(mainWindow, `Actualizacion disponible: v${info.version}. Descargando en segundo plano...`);
+    sendUpdateState(mainWindow, { state: 'available', version: info.version });
   });
 
   autoUpdater.on('update-not-available', () => {
     console.log('[auto-updater] No hay actualizaciones disponibles.');
+    sendLog(mainWindow, `Ya tienes la ultima version instalada (v${app.getVersion()}).`);
+    sendUpdateState(mainWindow, { state: 'not-available' });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[auto-updater] Actualizacion descargada, se instalara al cerrar la app:', info.version);
-    sendLog(mainWindow, `Actualizacion v${info.version} descargada. Se instalara la proxima vez que cierres la app.`);
+    sendLog(mainWindow, `Actualizacion v${info.version} descargada. Lista para instalar.`);
+    sendUpdateState(mainWindow, { state: 'downloaded', version: info.version });
   });
 
   autoUpdater.on('error', (err) => {
     const message = err ? (err.stack || err.toString()) : 'desconocido';
     console.error('[auto-updater] Error verificando actualizaciones:', message);
-    // No se manda a sendLog: si no hay releases publicados todavia en GitHub
-    // (caso normal en desarrollo), electron-updater reporta error aqui en
-    // cada arranque, y eso ensuciaria el log del operador sin ser un
-    // problema real de la app.
   });
 
+  if (app.isPackaged) {
+    checkNow(mainWindow);
+  } else {
+    console.log('[auto-updater] Modo desarrollo: se omite la verificacion automatica al iniciar.');
+  }
+}
+
+/**
+ * Dispara una verificacion manual (usado por el boton "Buscar
+ * actualizaciones" y por la verificacion automatica al arrancar). A
+ * diferencia de los listeners de arriba (silenciosos en dev), aqui SI se
+ * refleja un error en el log de la app si la verificacion manual falla,
+ * porque el usuario acaba de pedir explicitamente una respuesta.
+ */
+function checkNow(mainWindow) {
   autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-    console.error('[auto-updater] No se pudo iniciar la verificacion:', err);
+    console.error('[auto-updater] No se pudo verificar actualizaciones:', err);
+    sendLog(mainWindow, `No se pudo verificar actualizaciones: ${err.message || err}`);
   });
 }
 
-module.exports = { initAutoUpdater };
+/**
+ * Cierra la app e instala la actualizacion ya descargada (boton "Reiniciar
+ * app" del popup/insignia). No hace nada si todavia no hay nada descargado
+ * -- electron-updater simplemente ignora la llamada en ese caso.
+ */
+function restartToUpdate() {
+  autoUpdater.quitAndInstall();
+}
+
+module.exports = { initAutoUpdater, checkNow, restartToUpdate };

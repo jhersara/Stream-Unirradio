@@ -1,11 +1,17 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
 const { resolveFfmpegPath } = require('./media-probe');
 const libraryManager = require('./library-manager');
 const audioCapture = require('./audio-capture');
+const historyStore = require('./history-store');
 const {
   sendLog,
   sendStatus,
   sendVuLevel,
+  sendPreviewVuLevel,
+  sendSpectrum,
   sendIntroProgress,
   sendOutroProgress
 } = require('./ipc-events');
@@ -16,10 +22,16 @@ const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
 const OUTRO_CUTOFF_SECONDS = 2;
 const CHUNK_MS = 50;
+const VU_EMIT_INTERVAL_MS = 66;
+const SPECTRUM_FFT_SIZE = 512;
+const SPECTRUM_BAND_COUNT = 24;
 
 // Solo se soporta UNA sesion de transmision activa a la vez (coincide con el
 // diseno de un unico boton Iniciar/Detener en la interfaz).
 let session = null;
+
+// Prueba de microfono (fuera de una transmision real, ver startPreview).
+let previewState = null;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,6 +69,24 @@ function writeToEncoder(chunk) {
   }
 }
 
+function writeToRecorder(chunk) {
+  if (!session || !session.recorderProcess) return;
+  const stdin = session.recorderProcess.stdin;
+  if (!stdin || stdin.destroyed) return;
+  try {
+    stdin.write(chunk);
+  } catch {
+    // Si la grabacion local falla no debe afectar la transmision en vivo;
+    // el evento 'error'/'close' del proceso grabador ya lo reporta aparte.
+  }
+}
+
+/** Escribe el mismo audio al encoder (Icecast) y, si aplica, a la grabacion local. */
+function writeToOutputs(chunk) {
+  writeToEncoder(chunk);
+  writeToRecorder(chunk);
+}
+
 // ---------------------------------------------------------------------------
 // Construccion de comando ffmpeg / URL Icecast
 // (misma logica ya validada en el prototipo Python: icecast:// + legacy_icecast)
@@ -84,6 +114,25 @@ function buildEncoderArgs(icecastUrl) {
     '-fflags', 'nobuffer',
     icecastUrl
   ];
+}
+
+function buildRecorderArgs(outputPath) {
+  return [
+    '-y', '-hide_banner', '-loglevel', 'warning',
+    '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS),
+    '-i', 'pipe:0',
+    '-c:a', 'libmp3lame', '-b:a', '128k',
+    outputPath
+  ];
+}
+
+function buildRecordingPath() {
+  const dir = path.join(app.getPath('documents'), 'Stream Radio - Grabaciones');
+  fs.mkdirSync(dir, { recursive: true });
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  return path.join(dir, `transmision-${stamp}.mp3`);
 }
 
 /**
@@ -170,15 +219,6 @@ function playTimedPcm(buffer, { onChunk, onProgress, cutoffSeconds }) {
         return;
       }
 
-      // Los bytes a enviar se calculan segun el TIEMPO REAL transcurrido
-      // (Date.now() - startTime), no segun un contador fijo de "ticks" de
-      // CHUNK_MS. setTimeout en Node no garantiza precision: si el event
-      // loop se congestiona un momento (GC, IPC, disco), un tick puede
-      // llegar tarde. Con un chunk de tamano fijo por tick, ese retraso se
-      // traduce en un hueco real de audio (silencio/corte) porque el
-      // encoder se queda sin datos mientras tanto. Calculando el objetivo
-      // por tiempo real, el siguiente tick manda un chunk mas grande para
-      // "ponerse al dia", sin dejar huecos.
       const elapsedReal = (Date.now() - startTime) / 1000;
 
       if (cutoffSeconds != null && elapsedReal >= cutoffSeconds) {
@@ -244,6 +284,53 @@ function computePeakDb(buffer) {
 }
 
 // ---------------------------------------------------------------------------
+// Cierre ordenado de un proceso hijo (ffmpeg): cerrar stdin (EOF) y ESPERAR
+// a que termine solo antes de matarlo. Si se mata de inmediato (SIGTERM) sin
+// dar tiempo a vaciar el encoder, el archivo/stream queda con la cola sin
+// escribir -- para el encoder de Icecast eso ademas provocaba el bug del
+// bucle de 3-6s al final (ver README). Se aplica igual a la grabacion local
+// para no dejar el mp3 truncado/corrupto.
+// ---------------------------------------------------------------------------
+function gracefullyEndProcess(proc, timeoutMs) {
+  return new Promise((resolve) => {
+    if (!proc || proc.exitCode !== null) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const graceTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill(); } catch { /* noop */ }
+      resolve();
+    }, timeoutMs);
+
+    proc.once('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(graceTimer);
+      resolve();
+    });
+
+    try {
+      if (proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.end();
+      } else {
+        clearTimeout(graceTimer);
+        settled = true;
+        try { proc.kill(); } catch { /* noop */ }
+        resolve();
+      }
+    } catch {
+      clearTimeout(graceTimer);
+      settled = true;
+      try { proc.kill(); } catch { /* noop */ }
+      resolve();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Ciclo de vida del proceso ffmpeg (encoder de salida hacia Icecast)
 // ---------------------------------------------------------------------------
 function wireEncoderProcessEvents(mainWindow, encoderProcess) {
@@ -259,13 +346,28 @@ function wireEncoderProcessEvents(mainWindow, encoderProcess) {
 
   encoderProcess.on('error', (err) => {
     sendLog(mainWindow, `ERROR de FFmpeg: ${err.message}`);
-    handleUnexpectedTermination(mainWindow, encoderProcess);
+    handleUnexpectedTermination(mainWindow);
   });
 
   encoderProcess.on('close', (code) => {
     if (session && session.encoderProcess === encoderProcess && !session.stopRequested) {
       sendLog(mainWindow, `ERROR: FFmpeg se cerro inesperadamente (codigo ${code}).`);
-      handleUnexpectedTermination(mainWindow, encoderProcess);
+      handleUnexpectedTermination(mainWindow);
+    }
+  });
+}
+
+function wireRecorderProcessEvents(mainWindow, recorderProcess) {
+  recorderProcess.stderr.on('data', (chunk) => {
+    chunk.toString().split('\n').forEach((rawLine) => {
+      const line = rawLine.trim();
+      if (line) sendLog(mainWindow, `Grabacion: ${line}`);
+    });
+  });
+  recorderProcess.on('error', (err) => {
+    sendLog(mainWindow, `Aviso: la grabacion local fallo (${err.message}). La transmision en vivo sigue normal.`);
+    if (session && session.recorderProcess === recorderProcess) {
+      session.recorderProcess = null;
     }
   });
 }
@@ -277,11 +379,88 @@ function handleUnexpectedTermination(mainWindow) {
   if (session.inputStream) {
     try { session.inputStream.quit(() => {}); } catch { /* noop */ }
   }
+  if (session.recorderProcess) {
+    try { session.recorderProcess.kill(); } catch { /* noop */ }
+  }
   stopStatusTicker();
+  const finishedSession = session;
   session = null;
+  logHistoryEntry(finishedSession, 'error');
   sendIntroProgress(mainWindow, { done: true });
   sendOutroProgress(mainWindow, { done: true });
   sendStatus(mainWindow, 'error', 0);
+}
+
+function logHistoryEntry(finishedSession, endReason) {
+  if (!finishedSession || !finishedSession.startedAt) return;
+  try {
+    historyStore.addSession({
+      startedAt: new Date(finishedSession.startedAt).toISOString(),
+      endedAt: new Date().toISOString(),
+      durationSeconds: (Date.now() - finishedSession.startedAt) / 1000,
+      server: finishedSession.config.server,
+      mount: finishedSession.config.mount,
+      recordingPath: finishedSession.recordingPath || null,
+      endReason
+    });
+  } catch {
+    // No dejar que un fallo guardando el historial afecte nada mas.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prueba de microfono (fuera de sesion): solo escucha y manda nivel de vu,
+// no conecta a Icecast ni escribe a ningun lado. Permite comprobar que el
+// microfono elegido funciona antes de transmitir de verdad.
+// ---------------------------------------------------------------------------
+function startPreview(mainWindow, deviceId) {
+  if (session) {
+    return { ok: false, reason: 'streaming-active' };
+  }
+  if (previewState) {
+    stopPreview();
+  }
+  if (!audioCapture.isAvailable()) {
+    sendLog(mainWindow, 'ERROR: el modulo de captura de audio (naudiodon) no esta disponible.');
+    return { ok: false, reason: 'naudiodon-unavailable' };
+  }
+
+  let inputStream;
+  try {
+    inputStream = audioCapture.createInputStream(deviceId, SAMPLE_RATE, CHANNELS);
+  } catch (err) {
+    sendLog(mainWindow, `ERROR probando microfono: ${err.message}`);
+    return { ok: false, reason: 'device-error' };
+  }
+
+  previewState = { inputStream };
+  let lastEmit = 0;
+
+  inputStream.on('data', (chunk) => {
+    if (!previewState) return;
+    const now = Date.now();
+    if (now - lastEmit < VU_EMIT_INTERVAL_MS) return;
+    lastEmit = now;
+    const { peak, db } = computePeakDb(chunk);
+    sendPreviewVuLevel(mainWindow, peak, db);
+  });
+  inputStream.on('error', (err) => {
+    sendLog(mainWindow, `ERROR probando microfono: ${err.message}`);
+  });
+  inputStream.start();
+
+  return { ok: true };
+}
+
+function stopPreview() {
+  if (!previewState) return { ok: true };
+  try { previewState.inputStream.quit(() => {}); } catch { /* noop */ }
+  previewState = null;
+  return { ok: true };
+}
+
+function isPreviewing() {
+  return previewState !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +471,10 @@ async function startStream(mainWindow, rawConfig) {
     sendLog(mainWindow, 'Ya hay una transmision en curso.');
     return { ok: false, reason: 'already-streaming' };
   }
+
+  // Si estaba corriendo una prueba de microfono, se detiene sola al pasar
+  // a una transmision real (no pueden compartir el mismo dispositivo).
+  stopPreview();
 
   if (!audioCapture.isAvailable()) {
     sendLog(mainWindow, 'ERROR: el modulo de captura de audio (naudiodon) no esta disponible. Revisa la Fase 1.5 del README (falta compilar con el Windows SDK instalado).');
@@ -324,6 +507,8 @@ async function startStream(mainWindow, rawConfig) {
     mainWindow,
     config,
     encoderProcess,
+    recorderProcess: null,
+    recordingPath: null,
     inputStream: null,
     gain: config.gain,
     startedAt: null,
@@ -335,6 +520,22 @@ async function startStream(mainWindow, rawConfig) {
     introPcmPromise: null,
     outroPcmPromise: null
   };
+
+  // Grabacion local opcional (el usuario decide Si/No al darle Iniciar,
+  // ver renderer.js). Se abre un proceso ffmpeg aparte que recibe el MISMO
+  // audio (intro + vivo + outro) que va al encoder de Icecast.
+  if (config.recordSession) {
+    try {
+      const recordingPath = buildRecordingPath();
+      const recorderProcess = spawn(ffmpegPath, buildRecorderArgs(recordingPath), { windowsHide: true });
+      session.recorderProcess = recorderProcess;
+      session.recordingPath = recordingPath;
+      wireRecorderProcessEvents(mainWindow, recorderProcess);
+      sendLog(mainWindow, `Grabando esta transmision en: ${recordingPath}`);
+    } catch (err) {
+      sendLog(mainWindow, `Aviso: no se pudo iniciar la grabacion local (${err.message}). La transmision sigue normal.`);
+    }
+  }
 
   // Pre-decodificar intro/outro a PCM EN PARALELO (intro: mientras se
   // confirma la conexion; outro: durante toda la sesion), para que cuando
@@ -401,7 +602,7 @@ async function runIntroThenLive(mainWindow) {
         if (!session || session.stopRequested) return;
         sendLog(mainWindow, 'Reproduciendo intro...');
         const { promise, abort } = playTimedPcm(pcm, {
-          onChunk: writeToEncoder,
+          onChunk: writeToOutputs,
           onProgress: (elapsedT, durationT) => sendIntroProgress(mainWindow, { elapsedSeconds: elapsedT, durationSeconds: durationT })
         });
         session.introController = { abort };
@@ -443,13 +644,12 @@ function beginLiveCapture(mainWindow) {
   // buffer interno para compensar, lo que se escucha como un eco/repeticion
   // en la transmision. 15 actualizaciones/seg siguen siendo fluidas para el
   // ojo humano y le quitan presion al hot path de audio.
-  const VU_EMIT_INTERVAL_MS = 66;
   let lastVuEmit = 0;
 
   inputStream.on('data', (chunk) => {
     if (!session || session.phase !== 'live') return;
     const gained = applyGain(chunk, session.gain);
-    writeToEncoder(gained);
+    writeToOutputs(gained);
 
     const now = Date.now();
     if (now - lastVuEmit >= VU_EMIT_INTERVAL_MS) {
@@ -519,7 +719,7 @@ async function stopStream(mainWindow) {
         const durationSeconds = pcm.length / BYTES_PER_SECOND;
         const cutoffSeconds = Math.max(0, durationSeconds - OUTRO_CUTOFF_SECONDS);
         const { promise, abort } = playTimedPcm(pcm, {
-          onChunk: writeToEncoder,
+          onChunk: writeToOutputs,
           onProgress: (elapsedT, durationT) => sendOutroProgress(mainWindow, { elapsedSeconds: elapsedT, durationSeconds: durationT }),
           cutoffSeconds
         });
@@ -544,63 +744,24 @@ async function stopStream(mainWindow) {
   return { ok: true };
 }
 
-function teardownSession(mainWindow, finalStatusKind) {
-  return new Promise((resolve) => {
-    stopStatusTicker();
-    const proc = session ? session.encoderProcess : null;
-    session = null;
+async function teardownSession(mainWindow, finalStatusKind) {
+  stopStatusTicker();
+  const finishedSession = session;
+  session = null;
 
-    function finish() {
-      sendStatus(mainWindow, finalStatusKind, 0);
-      sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
-      resolve();
-    }
+  await Promise.all([
+    gracefullyEndProcess(finishedSession ? finishedSession.encoderProcess : null, 2500),
+    gracefullyEndProcess(finishedSession ? finishedSession.recorderProcess : null, 2500)
+  ]);
 
-    if (!proc || proc.exitCode !== null) {
-      finish();
-      return;
-    }
+  logHistoryEntry(finishedSession, 'manual');
 
-    // IMPORTANTE: no matar el proceso de inmediato. Si lo matamos (SIGTERM)
-    // al mismo tiempo que cerramos stdin, ffmpeg no alcanza a vaciar el
-    // encoder ni a cerrar la conexion TCP hacia Icecast de forma limpia.
-    // Zeno.fm interpreta ese corte abrupto quedandose con el ultimo trozo
-    // de audio en su buffer y lo repite en bucle para los oyentes durante
-    // varios segundos hasta que detecta que la fuente ya no responde. Por
-    // eso: cerramos stdin (EOF), le damos un plazo para que termine solo
-    // (lo cual manda un cierre de conexion correcto), y solo si no sale a
-    // tiempo lo forzamos como ultimo recurso.
-    let settled = false;
-    const graceTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { proc.kill(); } catch { /* noop */ }
-      finish();
-    }, 2500);
+  if (finishedSession && finishedSession.recordingPath) {
+    sendLog(mainWindow, `Grabacion guardada en: ${finishedSession.recordingPath}`);
+  }
 
-    proc.once('close', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(graceTimer);
-      finish();
-    });
-
-    try {
-      if (proc.stdin && !proc.stdin.destroyed) {
-        proc.stdin.end();
-      } else {
-        clearTimeout(graceTimer);
-        settled = true;
-        try { proc.kill(); } catch { /* noop */ }
-        finish();
-      }
-    } catch {
-      clearTimeout(graceTimer);
-      settled = true;
-      try { proc.kill(); } catch { /* noop */ }
-      finish();
-    }
-  });
+  sendStatus(mainWindow, finalStatusKind, 0);
+  sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +777,7 @@ function setGain(value) {
 // Limpieza de emergencia al cerrar la app (evita procesos ffmpeg huerfanos)
 // ---------------------------------------------------------------------------
 function shutdown() {
+  stopPreview();
   if (!session) return;
   stopStatusTicker();
   if (session.introController) session.introController.abort();
@@ -626,6 +788,10 @@ function shutdown() {
   if (session.encoderProcess) {
     try { session.encoderProcess.kill(); } catch { /* noop */ }
   }
+  if (session.recorderProcess) {
+    try { session.recorderProcess.kill(); } catch { /* noop */ }
+  }
+  logHistoryEntry(session, 'app-closed');
   session = null;
 }
 
@@ -633,4 +799,13 @@ function isStreaming() {
   return session !== null;
 }
 
-module.exports = { startStream, stopStream, setGain, shutdown, isStreaming };
+module.exports = {
+  startStream,
+  stopStream,
+  setGain,
+  shutdown,
+  isStreaming,
+  startPreview,
+  stopPreview,
+  isPreviewing
+};

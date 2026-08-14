@@ -131,4 +131,28 @@ function getTrackPath(id) {
   return path.join(getLibraryRoot(), track.relDir || 'tracks', track.fileName);
 }
 
-module.exports = { importTracks, deleteTrack, listTracks, getTrackPath };
+const MIME_BY_EXTENSION = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg'
+};
+
+/**
+ * Devuelve el audio de una pista como data URL base64, para reproducirlo
+ * en un <audio> del renderer (vista previa en Biblioteca). El renderer no
+ * tiene acceso directo al sistema de archivos, asi que esta es la forma
+ * mas simple de exponerlo sin registrar un protocolo custom.
+ */
+function getTrackAudioDataUrl(id) {
+  const filePath = getTrackPath(id);
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  const mime = MIME_BY_EXTENSION[ext] || 'audio/mpeg';
+  const buffer = fs.readFileSync(filePath);
+  return `data:${mime};base64,${buffer.toString('base64')}`;
+}
+
+module.exports = { importTracks, deleteTrack, listTracks, getTrackPath, getTrackAudioDataUrl };

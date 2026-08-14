@@ -7,6 +7,27 @@ const ffmpegStream = require('./ffmpeg-stream');
 let mainWindow = null;
 let forceClose = false;
 
+// ---------------------------------------------------------------------------
+// Bloqueo de instancia unica: sin esto, cualquier doble arranque (doble
+// clic accidental, el instalador reabriendo la app tras "Ejecutar ahora",
+// etc.) crea una SEGUNDA ventana completa en vez de simplemente enfocar la
+// que ya esta abierta -- esto era el bug de "se me abren dos pestañas".
+// ---------------------------------------------------------------------------
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  bootstrapApp();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1250,
@@ -15,6 +36,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#14161a',
     autoHideMenuBar: true,
+    icon: path.join(__dirname, '..', '..', 'resources', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -60,24 +82,26 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  initAutoUpdater(mainWindow);
+function bootstrapApp() {
+  app.whenReady().then(() => {
+    createWindow();
+    initAutoUpdater(mainWindow);
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    ffmpegStream.shutdown();
+    if (process.platform !== 'darwin') {
+      app.quit();
     }
   });
-});
 
-app.on('window-all-closed', () => {
-  ffmpegStream.shutdown();
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-app.on('before-quit', () => {
-  ffmpegStream.shutdown();
-});
+  app.on('before-quit', () => {
+    ffmpegStream.shutdown();
+  });
+}

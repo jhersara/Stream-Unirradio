@@ -1,7 +1,7 @@
 {
   "name": "stream-unirradio",
   "productName": "Stream Radio",
-  "version": "0.5.0",
+  "version": "0.7.1",
   "description": "Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast",
   "main": "src/main/main.js",
   "author": "UNIR Radio",
@@ -10,6 +10,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
+    "dist:publish": "electron-builder --publish always",
     "postinstall": "electron-rebuild -f -w naudiodon"
   },
   "devDependencies": {
@@ -34,14 +35,17 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Stream Radio"
+      "shortcutName": "Stream Radio",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico"
     },
     "publish": [
       {

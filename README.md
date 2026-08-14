@@ -296,35 +296,136 @@ con 4 vistas, siguiendo las especificaciones funcionales #5-#10.
 - [x] `ffmpeg.exe` incluido como recurso empaquetado (`extraResources` ya apunta a
       `resources/ffmpeg/`; `media-probe.js` resuelve la ruta distinto en dev vs. empaquetado via
       `app.isPackaged`).
-- [ ] Agregar icono de marca (`resources/icon.ico`, 256x256) y referenciarlo en `build.win.icon`
-      — opcional, mejora estética pendiente; sin él, el instalador usa el icono genérico de
-      Electron.
+- [x] Agregar icono de marca (`resources/icon.ico`, 256x256) y referenciarlo en `build.win.icon`
+      — **hecho.** El usuario proporciono el logo (letra "R" dorada sobre fondo negro con ondas
+      de señal), se convirtio a `.ico` multi-resolucion (16 a 256px, con transparencia real en
+      las esquinas) y se referencio en `build.win.icon`, `build.nsis.installerIcon`,
+      `build.nsis.uninstallerIcon`, y en el icono de la `BrowserWindow` (`main.js`) para que se
+      vea correcto tambien corriendo con `npm start`, no solo en el instalador empaquetado.
 - [ ] Probar instalador en una máquina limpia (sin Node/ffmpeg preinstalado) para validar que
       todo funcione de forma autónoma. Requiere correr `npm run dist` (Claude no puede ejecutar
-      comandos en esta máquina).
+      comandos en esta máquina). **Instalador ya generado** (`dist\Stream Radio Setup 0.5.0.exe`
+      + `latest.yml` + `.blockmap`, listos para GitHub Releases) — falta instalarlo de verdad y
+      confirmar que la app empaquetada encuentra `ffmpeg.exe` y `naudiodon` correctamente (las
+      rutas de recursos son distintas en modo dev vs. empaquetado).
 
-## Fase 5.5 — Actualizaciones automáticas (GitHub) — CONFIGURADO
+## Fase 5.5 — Actualizaciones automáticas (GitHub) — CÓDIGO COMPLETO, FALTA PUBLICAR
 
 - [x] Repositorio confirmado y configurado en `build.publish` (`owner: jhersara`,
       `repo: Stream-Unirradio`).
 - [x] `electron-updater` integrado en `auto-updater.js`: `checkForUpdatesAndNotify()` al
-      arrancar, manejo de eventos (`update-available`, `update-downloaded`, `error`), y ahora
-      también refleja el estado en la consola de actividad de la app (no solo en DevTools), via
-      `sendLog`.
-- [ ] Definir flujo de publicación: cada release en GitHub (tag + build subido a Releases) debe
-      quedar disponible para que los clientes instalados lo detecten automáticamente. Con
-      `GH_TOKEN` configurado como variable de entorno, `npm run dist -- --publish always` sube
-      el build directo a un Release de GitHub.
+      arrancar (solo si `app.isPackaged`, para no ensuciar el log en modo desarrollo con un
+      error esperado por falta de `app-update.yml`), manejo de eventos (`update-available`,
+      `update-downloaded`, `update-not-available`, `error`), reflejado en la consola de
+      actividad de la app via `sendLog` (no solo en DevTools).
+- [x] **Botón manual "Buscar actualizaciones"** en la vista Información: canal IPC
+      `updates:check` (`ipc-handlers.js` → `auto-updater.js#checkNow`), expuesto en
+      `preload.js` como `checkForUpdates()`. Sirve tanto para que el usuario compruebe a mano
+      si hay version nueva, como para probar el flujo completo sin esperar al arranque.
+- [x] **Único paso que falta — es operativo, no de código:** publicar un Release en GitHub con
+      el instalador + `latest.yml` + `.blockmap` (ya generados en `dist/` tras `npm run dist`).
+      Con `GH_TOKEN` configurado como variable de entorno, `npm run dist:publish` (script
+      dedicado que evita el problema de npm comiéndose el flag `--publish` cuando se pasa via
+      `npm run dist -- --publish always`) construye Y sube todo junto a un Release. **v0.6.0 ya
+      publicado exitosamente** (build firmado con signtool.exe, subido a GitHub Releases como
+      borrador — falta que el usuario le de "Publish release" en GitHub.com para que quede
+      visible/detectable).
+- [x] Para confirmar que el ciclo completo funciona de verdad: publicar un release con la
+      version ACTUAL primero (deja a los futuros clientes con una linea base), despues subir la
+      version en `package.json`, volver a construir y publicar, y verificar que una instalacion
+      con la version anterior lo detecta sola (o via el boton manual) y lo descarga. **Confirmado
+      por el usuario: el ciclo completo de auto-update funciona.** Fase 5.5 cerrada.
 - [ ] Nota: en Windows, un instalador sin firma de código puede generar advertencias de
       SmartScreen y, dependiendo de la configuración, complicar el auto-update silencioso.
       Evaluar más adelante si se requiere certificado de firma de código.
 
 ## Fase 6 — Pruebas de conexión real
 
-- [ ] Prueba de conexión contra Zeno.fm con credenciales reales.
-- [ ] Prueba de intro/outro con archivos reales, verificando que las barras de progreso reflejen
-      el tiempo real y que el corte tras el outro ocurra exactamente 2s antes de su fin.
-- [ ] Prueba de estabilidad: transmisión sostenida por al menos 30-60 minutos sin cortes.
+- [x] Prueba de conexión contra Zeno.fm con credenciales reales — confirmado, transmite bien.
+- [x] Prueba de intro/outro con archivos reales — confirmado tras las correcciones de la
+      Fase 2 (ver "Segunda tanda de correcciones" arriba); ritmo real, sin cortes, corte del
+      outro a -2s preciso.
+- [ ] Prueba de estabilidad: transmisión sostenida por al menos 30-60 minutos sin cortes —
+      pendiente.
+
+## Fase 7 — Ronda grande de mejoras (interfaz + funcionalidades nuevas)
+
+A pedido explícito del usuario, tras un brainstorm de mejoras de interfaz y nuevas
+funcionalidades. De la lista completa propuesta, esta ronda implementó lo que estaba mejor
+especificado y se integraba naturalmente entre sí; el resto queda para la siguiente (ver
+"Pendiente para la próxima ronda" al final de esta fase).
+
+- [x] **Bug de producción corregido: se abrían dos ventanas de la app al iniciar.** Causa: no
+      había bloqueo de instancia única en Electron. Cualquier doble-arranque (doble clic
+      accidental, el instalador reabriendo tras "Ejecutar ahora", etc.) creaba una SEGUNDA
+      `BrowserWindow` completa en vez de simplemente enfocar la que ya estaba abierta. **Fix:**
+      `app.requestSingleInstanceLock()` en `main.js` — si ya hay una instancia corriendo, la
+      nueva se cierra sola y en su lugar se enfoca/restaura la existente (evento
+      `second-instance`).
+- [x] **Prueba de micrófono sin transmitir** ("estado de señal"). Nuevo botón "Probar
+      micrófono" en Configuración, junto al selector de dispositivo, con su propio mini-vúmetro
+      segmentado. Usa `naudiodon` para escuchar el dispositivo elegido SIN conectar a Icecast ni
+      escribir a ningún lado (`ffmpeg-stream.js#startPreview/stopPreview`, canales
+      `stream:preview-start` / `stream:preview-stop`, evento `stream:preview-vu-level`). Se
+      detiene sola al salir de la vista Configuración o al iniciar una transmisión real (no
+      pueden compartir el mismo dispositivo a la vez).
+- [x] **Grabación local con confirmación Sí/No al iniciar.** Al darle "Iniciar Transmisión",
+      aparece un modal preguntando si se quiere guardar también un archivo local (mp3) de la
+      sesión. Si dice "No" arranca la transmisión normal; si dice "Sí", además de transmitir a
+      Zeno se abre un SEGUNDO proceso ffmpeg que recibe el mismo audio (intro + vivo + outro,
+      via `writeToOutputs()`) y lo codifica a un archivo local en
+      `Documentos/Stream Radio - Grabaciones/transmision-YYYY-MM-DD_HH-mm-ss.mp3`. Un fallo en
+      la grabación local NUNCA interrumpe la transmisión en vivo (proceso independiente, errores
+      capturados aparte). El cierre del proceso grabador usa el mismo patrón de cierre ordenado
+      (`gracefullyEndProcess`) que ya se usaba para el encoder, para no dejar el mp3 truncado.
+- [x] **Historial de transmisiones.** Nueva sección en la barra lateral. Cada vez que una
+      sesión termina (manual, por error, o porque se cerró la app a mitad de transmisión) se
+      guarda una entrada en `history.json` (`src/main/history-store.js`, máximo 200 entradas)
+      con fecha, duración, servidor/mount, y la ruta de la grabación si se guardó una. La vista
+      lista las sesiones más recientes primero, con un botón "Abrir carpeta" (`shell.
+      showItemInFolder`) para las que tienen grabación.
+- [x] **Popup de actualización + insignia persistente + reinicio con un clic.** Cuando
+      `electron-updater` detecta una versión nueva, aparece un modal informativo; si el usuario
+      lo cierra sin actuar, queda una insignia dorada pulsante al pie de la barra de actividad
+      (mismo patrón que usa la app de escritorio de Claude) que no desaparece hasta que se
+      resuelva. Cuando la descarga termina, el modal se vuelve a mostrar solo (y la insignia
+      cambia de texto) ofreciendo un botón "Reiniciar app" que llama a
+      `autoUpdater.quitAndInstall()` de inmediato, sin esperar a que el usuario cierre la app por
+      su cuenta. Estado estructurado nuevo: evento `app:update-state` (`ipc-events.js`), UI en
+      `renderer.js` (`openUpdateModal`, `showUpdateBadge`).
+
+### Bug encontrado al probar: el modal tapaba toda la app desde el arranque
+
+Al primer `npm start` despues de esta ronda, el modal generico (vacio, sin texto ni botones)
+aparecia sobre la interfaz e impedia interactuar con nada, incluso sin haber disparado ningun
+aviso de actualizacion ni el prompt de grabacion. Causa: en CSS, `.modal-overlay { display:
+flex; }` y la regla por defecto del navegador `[hidden] { display: none; }` tienen la MISMA
+especificidad (una clase vs. un atributo); cuando eso pasa, gana la regla que aparece mas abajo
+en la cascada, y como `styles.css` se carga despues de la hoja de estilos del navegador, mi
+`display: flex` ganaba SIEMPRE, sin importar si el atributo `hidden` estaba puesto o no. El
+modal quedaba siempre visible (y vacio, porque `showModal()` nunca se habia llamado todavia).
+**Fix:** se agrego `.modal-overlay[hidden] { display: none; }`, que al ser un selector con
+mayor especificidad (clase + atributo) siempre gana, sin depender del orden en el archivo.
+
+### Pendiente para la próxima ronda (ya priorizado, no implementado todavía)
+
+Mejoras de interfaz:
+- [ ] Ecualizador de espectro (barras de frecuencia en tiempo real, reemplazando o
+      complementando el vúmetro simple) — requiere FFT sobre el audio en el proceso principal
+      (no hay dependencia nueva necesaria, se puede escribir una FFT simple a mano).
+- [ ] Vista previa de audio en Biblioteca (reproducir una pista ahí mismo antes de elegirla) —
+      requiere exponer el audio de la biblioteca al renderer via IPC (data URL en base64 o un
+      protocolo custom `media://`).
+- [ ] Modo mini-ventana flotante (siempre-encima, compacto) — factible reutilizando la MISMA
+      ventana (resize + `setAlwaysOnTop` + clase CSS `.compact-mode`), sin crear una segunda
+      `BrowserWindow`.
+
+Funcionalidades nuevas:
+- [ ] Reconexión automática si se cae la conexión con Zeno (reintentos con espera creciente).
+- [ ] Detección de "aire muerto" (alerta si no hay señal de audio real por X segundos durante
+      una transmisión en vivo).
+- [ ] Programación por horario (inicio/fin automático sin intervención manual) — necesita UI de
+      selección de horario + un scheduler persistente en el proceso principal.
 
 ---
 
@@ -338,14 +439,16 @@ Stream-Unirradio/
 │   └── ffmpeg/          # ffmpeg.exe (y build correspondiente) para empaquetar con la app
 └── src/
     ├── main/
-    │   ├── main.js            # proceso principal, ciclo de vida de la app
-    │   ├── ffmpeg-stream.js   # motor de streaming (implementado)
+    │   ├── main.js            # proceso principal, ciclo de vida de la app, instancia unica
+    │   ├── ffmpeg-stream.js   # motor de streaming, grabacion local, prueba de microfono
     │   ├── media-probe.js     # duración de audio via ffmpeg -i (implementado)
     │   ├── audio-capture.js   # captura de micrófono con naudiodon (implementado)
     │   ├── library-manager.js # biblioteca persistente y unificada de pistas (implementado)
+    │   ├── history-store.js   # historial de transmisiones (implementado)
+    │   ├── settings-store.js  # configuracion persistida, password cifrada con safeStorage
     │   ├── ipc-events.js      # helpers centralizados para emitir eventos al renderer
     │   ├── ipc-handlers.js    # registro de canales IPC
-    │   └── auto-updater.js    # electron-updater (Fase 5.5)
+    │   └── auto-updater.js    # electron-updater + estado estructurado para popup/insignia
     ├── preload/
     │   └── preload.js         # contextBridge, superficie expuesta al renderer
     └── renderer/

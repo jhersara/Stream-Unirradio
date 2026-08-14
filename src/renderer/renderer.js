@@ -3,11 +3,13 @@
 // (sound-fx.js). Sin acceso a Node ni a ipcRenderer directamente.
 
 const VU_SEGMENT_COUNT = 28;
+const MIC_TEST_SEGMENT_COUNT = 20;
 
 const els = {
   // Activity bar
   navItems: Array.from(document.querySelectorAll('.activity-item')),
   views: Array.from(document.querySelectorAll('.view')),
+  activityUpdateBadge: document.getElementById('activity-update-badge'),
 
   // Estudio
   onairDot: document.getElementById('onair-dot'),
@@ -42,6 +44,10 @@ const els = {
   password: document.getElementById('input-password'),
   device: document.getElementById('select-device'),
 
+  btnTestMic: document.getElementById('btn-test-mic'),
+  micTestMeter: document.getElementById('mic-test-meter'),
+  micTestDb: document.getElementById('mic-test-db'),
+
   checkIntro: document.getElementById('check-intro'),
   checkOutro: document.getElementById('check-outro'),
 
@@ -49,8 +55,13 @@ const els = {
   btnImportTrack: document.getElementById('btn-import-track'),
   trackList: document.getElementById('track-list'),
 
+  // Historial
+  historyList: document.getElementById('history-list'),
+
   // Informacion
   aboutVersion: document.getElementById('about-version'),
+  btnCheckUpdates: document.getElementById('btn-check-updates'),
+  updateStatus: document.getElementById('update-status'),
 
   // Status bar
   statusBar: document.getElementById('status-bar'),
@@ -58,10 +69,18 @@ const els = {
   statusbarText: document.getElementById('statusbar-text'),
   statusbarTimer: document.getElementById('statusbar-timer'),
   statusbarGain: document.getElementById('statusbar-gain'),
-  statusbarVersion: document.getElementById('statusbar-version')
+  statusbarVersion: document.getElementById('statusbar-version'),
+
+  // Modal generico
+  modalOverlay: document.getElementById('app-modal-overlay'),
+  modalTitle: document.getElementById('app-modal-title'),
+  modalMessage: document.getElementById('app-modal-message'),
+  modalActions: document.getElementById('app-modal-actions')
 };
 
 let libraryCache = { tracks: [] };
+let micTestActive = false;
+let latestUpdateInfo = null;
 
 // ---------------------------------------------------------------------------
 // Iconos: cualquier elemento con [data-icon="nombre"] recibe el SVG.
@@ -83,6 +102,17 @@ function switchView(viewName) {
   els.views.forEach((section) => {
     section.classList.toggle('view-active', section.dataset.viewPanel === viewName);
   });
+
+  if (viewName === 'history') {
+    loadHistory();
+  }
+
+  // La prueba de microfono usa el mismo dispositivo que tomaria una
+  // transmision real; se detiene sola al salir de Configuracion para no
+  // dejar el microfono "ocupado" sin que se note.
+  if (viewName !== 'config' && micTestActive) {
+    stopMicTest();
+  }
 }
 
 els.navItems.forEach((btn) => {
@@ -93,25 +123,57 @@ els.navItems.forEach((btn) => {
 });
 
 // ---------------------------------------------------------------------------
-// Vumetro segmentado
+// Modal generico (confirmar grabacion, avisos de actualizacion)
 // ---------------------------------------------------------------------------
-function buildVuMeter() {
-  els.vuMeter.innerHTML = '';
-  for (let i = 0; i < VU_SEGMENT_COUNT; i += 1) {
+function showModal({ title, message, actions, dismissible = true }) {
+  els.modalTitle.textContent = title;
+  els.modalMessage.textContent = message;
+  els.modalActions.innerHTML = '';
+  actions.forEach((action) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = action.className || 'btn-secondary';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      hideModal();
+      if (action.onClick) action.onClick();
+    });
+    els.modalActions.appendChild(btn);
+  });
+  els.modalOverlay.hidden = false;
+  els.modalOverlay.dataset.dismissible = dismissible ? '1' : '0';
+}
+
+function hideModal() {
+  els.modalOverlay.hidden = true;
+}
+
+els.modalOverlay.addEventListener('click', (event) => {
+  if (event.target !== els.modalOverlay) return;
+  if (els.modalOverlay.dataset.dismissible !== '1') return;
+  hideModal();
+});
+
+// ---------------------------------------------------------------------------
+// Vumetro segmentado (reutilizado para el vumetro real y la prueba de mic)
+// ---------------------------------------------------------------------------
+function buildSegmentedMeter(container, count) {
+  container.innerHTML = '';
+  for (let i = 0; i < count; i += 1) {
     const seg = document.createElement('div');
     seg.className = 'vu-segment';
-    els.vuMeter.appendChild(seg);
+    container.appendChild(seg);
   }
 }
 
-function updateVuMeter(peak) {
-  const segments = els.vuMeter.children;
-  const litCount = Math.round(Math.min(1, Math.max(0, peak)) * VU_SEGMENT_COUNT);
+function updateSegmentedMeter(container, count, peak) {
+  const segments = container.children;
+  const litCount = Math.round(Math.min(1, Math.max(0, peak)) * count);
   for (let i = 0; i < segments.length; i += 1) {
     const seg = segments[i];
     seg.classList.remove('is-lit-green', 'is-lit-yellow', 'is-lit-red');
     if (i < litCount) {
-      const ratio = i / VU_SEGMENT_COUNT;
+      const ratio = i / count;
       if (ratio < 0.6) seg.classList.add('is-lit-green');
       else if (ratio < 0.85) seg.classList.add('is-lit-yellow');
       else seg.classList.add('is-lit-red');
@@ -136,6 +198,15 @@ function formatShort(totalSeconds) {
   const mm = String(Math.floor(s / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
   return `${mm}:${ss}`;
+}
+
+function formatDateTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
+  } catch {
+    return iso;
+  }
 }
 
 function escapeHtml(str) {
@@ -375,6 +446,56 @@ function handleLibraryDeleteClick(event) {
 els.trackList.addEventListener('click', handleLibraryDeleteClick);
 
 // ---------------------------------------------------------------------------
+// Historial de transmisiones
+// ---------------------------------------------------------------------------
+function renderHistoryList(sessions) {
+  els.historyList.innerHTML = '';
+  if (!sessions || sessions.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'track-list-empty';
+    empty.textContent = 'Todavia no hay transmisiones registradas.';
+    els.historyList.appendChild(empty);
+    return;
+  }
+
+  sessions.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = 'history-item';
+    const durationText = formatClock(entry.durationSeconds || 0);
+    const isError = entry.endReason === 'error';
+    const reasonText = isError
+      ? 'Termino por error'
+      : entry.endReason === 'app-closed'
+        ? 'App cerrada a mitad de transmision'
+        : 'Detenida manualmente';
+
+    item.innerHTML = `
+      <span class="history-item-icon">${window.renderIcon(entry.recordingPath ? 'library' : 'radio', 16)}</span>
+      <div class="history-item-info">
+        <span class="history-item-date">${escapeHtml(formatDateTime(entry.startedAt))}</span>
+        <span class="history-item-meta${isError ? ' is-error' : ''}">${durationText} · ${escapeHtml(entry.mount || '')} · ${reasonText}</span>
+      </div>
+      ${entry.recordingPath ? `<button type="button" class="btn-secondary" data-reveal="${escapeHtml(entry.recordingPath)}">Abrir carpeta</button>` : ''}
+    `;
+    els.historyList.appendChild(item);
+  });
+
+  paintIcons(els.historyList);
+}
+
+async function loadHistory() {
+  const sessions = await window.streamAPI.listHistory();
+  renderHistoryList(sessions);
+}
+
+els.historyList.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-reveal]');
+  if (!btn) return;
+  window.SoundFX.click();
+  window.streamAPI.revealRecording(btn.getAttribute('data-reveal'));
+});
+
+// ---------------------------------------------------------------------------
 // Dispositivos de audio
 // ---------------------------------------------------------------------------
 async function loadDevices() {
@@ -396,6 +517,43 @@ async function loadDevices() {
 }
 
 // ---------------------------------------------------------------------------
+// Prueba de microfono (fuera de una transmision real): solo muestra el
+// nivel de señal, no conecta a Icecast ni graba nada. Sirve para confirmar
+// que el microfono elegido esta funcionando antes de salir al aire.
+// ---------------------------------------------------------------------------
+function setMicTestButtonLabel(isActive) {
+  els.btnTestMic.innerHTML = isActive
+    ? `<span class="icon-inline" data-icon="stop"></span> Detener prueba`
+    : `<span class="icon-inline" data-icon="volume"></span> Probar microfono`;
+  paintIcons(els.btnTestMic);
+}
+
+async function stopMicTest() {
+  if (!micTestActive) return;
+  await window.streamAPI.stopPreview();
+  micTestActive = false;
+  setMicTestButtonLabel(false);
+  updateSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT, 0);
+  els.micTestDb.textContent = '';
+}
+
+els.btnTestMic.addEventListener('click', async () => {
+  window.SoundFX.click();
+  if (micTestActive) {
+    await stopMicTest();
+    return;
+  }
+  const result = await window.streamAPI.startPreview(els.device.value);
+  if (result && result.ok) {
+    micTestActive = true;
+    setMicTestButtonLabel(true);
+  } else {
+    window.SoundFX.error();
+    appendLog('No se pudo iniciar la prueba de microfono (revisa que no haya una transmision activa).');
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Info de la app
 // ---------------------------------------------------------------------------
 async function loadAppInfo() {
@@ -403,6 +561,61 @@ async function loadAppInfo() {
   els.statusbarVersion.textContent = `v${info.version}`;
   els.aboutVersion.textContent = `Version ${info.version}`;
 }
+
+// ---------------------------------------------------------------------------
+// Actualizaciones: boton manual (vista Informacion) + popup automatico +
+// insignia persistente en la barra lateral cuando el usuario cierra el
+// popup sin actuar (mismo patron que usa la app de escritorio de Claude).
+// ---------------------------------------------------------------------------
+els.btnCheckUpdates.addEventListener('click', async () => {
+  window.SoundFX.click();
+  els.btnCheckUpdates.disabled = true;
+  els.updateStatus.textContent = 'Buscando actualizaciones...';
+  await window.streamAPI.checkForUpdates();
+  els.btnCheckUpdates.disabled = false;
+});
+
+function showUpdateBadge(title) {
+  els.activityUpdateBadge.hidden = false;
+  els.activityUpdateBadge.title = title;
+}
+
+function openUpdateModal() {
+  if (!latestUpdateInfo) return;
+  if (latestUpdateInfo.state === 'downloaded') {
+    showModal({
+      title: 'Actualizacion lista',
+      message: `La version v${latestUpdateInfo.version} ya se descargo. Reinicia la app para terminar de instalarla.`,
+      actions: [
+        { label: 'Mas tarde', className: 'btn-secondary' },
+        { label: 'Reiniciar app', className: 'btn-primary', onClick: () => window.streamAPI.restartToUpdate() }
+      ]
+    });
+  } else {
+    showModal({
+      title: 'Actualizacion disponible',
+      message: `Hay una nueva version (v${latestUpdateInfo.version}) descargandose en segundo plano. Te avisamos aqui mismo cuando este lista para instalar.`,
+      actions: [{ label: 'Entendido', className: 'btn-primary' }]
+    });
+  }
+}
+
+window.streamAPI.onUpdateState((payload) => {
+  if (payload.state === 'available') {
+    latestUpdateInfo = payload;
+    showUpdateBadge('Actualizacion disponible - descargando...');
+    openUpdateModal();
+  } else if (payload.state === 'downloaded') {
+    latestUpdateInfo = payload;
+    showUpdateBadge('Actualizacion lista - Reiniciar app');
+    openUpdateModal();
+  }
+});
+
+els.activityUpdateBadge.addEventListener('click', () => {
+  window.SoundFX.click();
+  openUpdateModal();
+});
 
 // ---------------------------------------------------------------------------
 // Ganancia
@@ -468,20 +681,20 @@ els.checkOutro.addEventListener('change', () => persistSettings());
 // ---------------------------------------------------------------------------
 // Iniciar / Detener
 // ---------------------------------------------------------------------------
-els.btnStart.addEventListener('click', async () => {
-  const config = currentConfig();
-
-  if (!config.server || !config.port || !config.mount || !config.user || !config.password) {
-    window.SoundFX.error();
-    appendLog('Completa servidor, puerto, punto de montaje, usuario y contrasena en Configuracion.');
-    return;
-  }
-
+async function actuallyStartStream(config, recordSession) {
+  config.recordSession = recordSession;
   persistSettings();
   window.SoundFX.start();
   els.btnStart.disabled = true;
   els.btnStop.disabled = false;
   setOnAirState('connecting');
+
+  // Si el microfono estaba en modo prueba, el proceso principal lo detiene
+  // solo al arrancar la sesion real; solo hace falta refrescar el boton.
+  if (micTestActive) {
+    micTestActive = false;
+    setMicTestButtonLabel(false);
+  }
 
   const result = await window.streamAPI.startStream(config);
   if (!result || !result.ok) {
@@ -490,6 +703,26 @@ els.btnStart.addEventListener('click', async () => {
     els.btnStop.disabled = true;
     setOnAirState('idle', 0);
   }
+}
+
+els.btnStart.addEventListener('click', () => {
+  const config = currentConfig();
+
+  if (!config.server || !config.port || !config.mount || !config.user || !config.password) {
+    window.SoundFX.error();
+    appendLog('Completa servidor, puerto, punto de montaje, usuario y contrasena en Configuracion.');
+    return;
+  }
+
+  showModal({
+    title: 'Grabar esta transmision',
+    message: '¿Quieres guardar tambien un archivo local (mp3) de esta transmision, ademas de enviarla a Zeno.fm? Se guarda en tu carpeta de Documentos.',
+    dismissible: false,
+    actions: [
+      { label: 'No, solo transmitir', className: 'btn-secondary', onClick: () => actuallyStartStream(config, false) },
+      { label: 'Si, grabar', className: 'btn-primary', onClick: () => actuallyStartStream(config, true) }
+    ]
+  });
 });
 
 els.btnStop.addEventListener('click', async () => {
@@ -504,6 +737,9 @@ els.btnStop.addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 window.streamAPI.onLog((payload) => {
   appendLog(payload.message, payload.timestamp);
+  if (els.updateStatus && /actualiz/i.test(payload.message)) {
+    els.updateStatus.textContent = payload.message;
+  }
 });
 
 window.streamAPI.onStatus((payload) => {
@@ -514,13 +750,24 @@ window.streamAPI.onStatus((payload) => {
   if (payload.kind === 'idle' || payload.kind === 'error') {
     els.btnStart.disabled = false;
     els.btnStop.disabled = true;
+    // Si la vista de Historial esta visible, refrescarla para que la
+    // sesion recien terminada aparezca de inmediato.
+    const historyView = document.querySelector('[data-view-panel="history"]');
+    if (historyView && historyView.classList.contains('view-active')) {
+      loadHistory();
+    }
   }
 });
 
 window.streamAPI.onVuLevel((payload) => {
   // payload: { peak (0..1), db }
-  updateVuMeter(payload.peak);
+  updateSegmentedMeter(els.vuMeter, VU_SEGMENT_COUNT, payload.peak);
   els.vuDbValue.textContent = payload.db <= -100 ? '-inf dB' : `${payload.db.toFixed(1)} dB`;
+});
+
+window.streamAPI.onPreviewVuLevel((payload) => {
+  updateSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT, payload.peak);
+  els.micTestDb.textContent = payload.db <= -100 ? '-inf dB' : `${payload.db.toFixed(1)} dB`;
 });
 
 window.streamAPI.onIntroProgress((payload) => {
@@ -554,7 +801,8 @@ window.streamAPI.onOutroProgress((payload) => {
 // ---------------------------------------------------------------------------
 async function bootstrap() {
   paintIcons();
-  buildVuMeter();
+  buildSegmentedMeter(els.vuMeter, VU_SEGMENT_COUNT);
+  buildSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT);
   await loadDevices();
   await loadLibrary();
   // La configuracion guardada se aplica DESPUES de cargar la biblioteca:
