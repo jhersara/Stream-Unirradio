@@ -1,7 +1,7 @@
 {
   "name": "stream-unirradio",
   "productName": "Stream Radio",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast",
   "main": "src/main/main.js",
   "author": "UNIR Radio",

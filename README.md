@@ -410,22 +410,51 @@ mayor especificidad (clase + atributo) siempre gana, sin depender del orden en e
 ### Pendiente para la próxima ronda (ya priorizado, no implementado todavía)
 
 Mejoras de interfaz:
-- [ ] Ecualizador de espectro (barras de frecuencia en tiempo real, reemplazando o
-      complementando el vúmetro simple) — requiere FFT sobre el audio en el proceso principal
-      (no hay dependencia nueva necesaria, se puede escribir una FFT simple a mano).
-- [ ] Vista previa de audio en Biblioteca (reproducir una pista ahí mismo antes de elegirla) —
-      requiere exponer el audio de la biblioteca al renderer via IPC (data URL en base64 o un
-      protocolo custom `media://`).
-- [ ] Modo mini-ventana flotante (siempre-encima, compacto) — factible reutilizando la MISMA
-      ventana (resize + `setAlwaysOnTop` + clase CSS `.compact-mode`), sin crear una segunda
-      `BrowserWindow`.
+- [x] Ecualizador de espectro — FFT propia (radix-2 Cooley-Tukey, sin dependencia nueva),
+      24 bandas logaritmicas, calculado en el MISMO bloque throttled que ya usaba el vumetro
+      (~15/seg) para no repetir el bug del eco. Canal `stream:spectrum`.
+- [x] Vista previa de audio en Biblioteca — boton de play por pista, usando un `<audio>`
+      compartido en el renderer alimentado por una data URL base64 (`library:get-audio`,
+      `library-manager.js#getTrackAudioDataUrl`).
+- [x] Modo mini-ventana flotante — boton en la barra de estado; reduce la MISMA ventana a
+      300x130px, `setAlwaysOnTop('floating')`, y cambia a una barra compacta dedicada
+      (`#compact-bar`) con estado + contador + boton de detener, en vez de esconder partes de
+      la UI grande con CSS.
 
-Funcionalidades nuevas:
+Funcionalidades nuevas (quedan para una futura ronda, no implementadas):
 - [ ] Reconexión automática si se cae la conexión con Zeno (reintentos con espera creciente).
 - [ ] Detección de "aire muerto" (alerta si no hay señal de audio real por X segundos durante
       una transmisión en vivo).
 - [ ] Programación por horario (inicio/fin automático sin intervención manual) — necesita UI de
       selección de horario + un scheduler persistente en el proceso principal.
+
+## Fase 8 — Rebrand: nuevo icono + paleta violeta/magenta
+
+A pedido del usuario, reemplazo completo de identidad visual (el icono UNIR Radio y la paleta
+navy/gold quedaron atras).
+
+- [x] **Icono nuevo**: el usuario proporciono el arte (perilla/dial negro con anillos de señal,
+      sobre fondo degradado violeta->magenta). Se recorto al bounding box del icono (incluida la
+      antena), se centro en lienzo cuadrado 1024x1024, y se genero `resources/icon.ico`
+      multi-resolucion (16-256px), reemplazando el icono anterior en el mismo archivo (no hizo
+      falta tocar `package.json`, ya apuntaba ahi).
+- [x] **Paleta nueva** aplicada en todo `styles.css`, sobre la guia de marca que dio el usuario
+      (violeta `#8a4dff`, magenta `#ff4dcc`, gradiente 135°, lavanda `#e9d6ff`, negro profundo
+      `#0d0d0d`, grises `#1a1a1a`/`#2e2e2e`/`#5a5a5a`/`#f2f2f2`):
+  - Botones principales, timer "en vivo", indicador activo de navegacion, barras de progreso,
+    insignia de actualizacion, modal: gradiente violeta->magenta (`--gradient-brand`), varios
+    con texto en gradiente (`background-clip: text`) para un efecto de brillo mas "moderno".
+  - **Decision de diseño deliberada**: los colores SEMANTICOS del vumetro (verde=bien,
+    ambar=cuidado, rojo=saturando) y de los botones de peligro/detener se dejaron FUERA del
+    rebrand de marca (`--success`, `--caution`, `--danger` siguen siendo verde/ambar/rojo, no
+    violeta/magenta) porque son convenciones universales de medicion de audio que un operador
+    necesita reconocer al instante; mezclarlas con el color de marca reduciria la legibilidad
+    funcional del vumetro.
+  - Radio de bordes subido de 3px a 6px (paneles) para un aspecto mas suave/moderno, acorde a
+    las esquinas redondeadas del propio icono nuevo.
+- [ ] **Pendiente de confirmar por el usuario** que el nuevo icono se ve bien una vez guardado
+      en `resources/icon.ico` y que la paleta nueva le gusta en la app real (esto se hizo sin
+      poder probarlo visualmente en vivo).
 
 ---
 

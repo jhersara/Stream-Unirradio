@@ -92,6 +92,15 @@ function registerIpcHandlers(mainWindow) {
     return libraryManager.deleteTrack(id);
   });
 
+  ipcMain.handle('library:get-audio', async (event, id) => {
+    try {
+      return { dataUrl: libraryManager.getTrackAudioDataUrl(id) };
+    } catch (err) {
+      sendLog(mainWindow, `ERROR cargando audio de la pista: ${err.message}`);
+      return { dataUrl: null };
+    }
+  });
+
   // ---------------------------------------------------------------------
   // Configuracion persistida (servidor, credenciales, pistas activas)
   // ---------------------------------------------------------------------
@@ -127,6 +136,38 @@ function registerIpcHandlers(mainWindow) {
   ipcMain.handle('history:reveal-recording', async (event, filePath) => {
     if (filePath) shell.showItemInFolder(filePath);
     return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------
+  // Modo mini-ventana flotante (compacto, siempre-encima)
+  // ---------------------------------------------------------------------
+  let isCompact = false;
+  let previousBounds = null;
+
+  ipcMain.handle('window:set-compact', async (event, enabled) => {
+    if (!mainWindow) return { compact: false };
+
+    if (enabled && !isCompact) {
+      previousBounds = mainWindow.getBounds();
+      mainWindow.setMinimumSize(280, 120);
+      mainWindow.setAlwaysOnTop(true, 'floating');
+      mainWindow.setResizable(false);
+      mainWindow.setBounds({
+        x: previousBounds.x,
+        y: previousBounds.y,
+        width: 300,
+        height: 130
+      });
+      isCompact = true;
+    } else if (!enabled && isCompact) {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setResizable(true);
+      mainWindow.setMinimumSize(640, 680);
+      if (previousBounds) mainWindow.setBounds(previousBounds);
+      isCompact = false;
+    }
+
+    return { compact: isCompact };
   });
 
   // ---------------------------------------------------------------------

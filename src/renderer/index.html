@@ -62,6 +62,7 @@
               <span id="vu-db-value" class="mono-value">-inf dB</span>
             </div>
             <div class="vu-meter" id="vu-meter"></div>
+            <div class="spectrum-meter" id="spectrum-meter"></div>
 
             <div class="gain-row">
               <label for="gain-slider">Volumen de Transmision</label>
@@ -268,9 +269,29 @@
         <span class="status-bar-item status-bar-item-gain" id="statusbar-gain">Ganancia 100%</span>
         <span class="status-bar-item status-bar-mono" id="statusbar-timer">00:00:00</span>
         <span class="status-bar-item status-bar-item-version" id="statusbar-version">v0.1.0</span>
+        <button type="button" class="btn-icon-only" id="btn-toggle-compact" title="Modo mini-ventana">
+          <span data-icon="compact"></span>
+        </button>
       </div>
     </footer>
 
+  </div>
+
+  <!-- ==================== BARRA COMPACTA (modo mini-ventana) ====================
+       Se muestra en lugar de toda la app cuando se activa el modo
+       mini-ventana flotante (siempre-encima, tamaño reducido). -->
+  <div class="compact-bar" id="compact-bar" hidden>
+    <span class="onair-dot" id="compact-dot"></span>
+    <div class="compact-labels">
+      <span class="compact-status" id="compact-status">Desconectado</span>
+      <span class="compact-timer" id="compact-timer">00:00:00</span>
+    </div>
+    <button type="button" class="btn-icon-only" id="btn-compact-stop" title="Detener">
+      <span data-icon="stop"></span>
+    </button>
+    <button type="button" class="btn-icon-only" id="btn-compact-restore" title="Restaurar ventana">
+      <span data-icon="expand"></span>
+    </button>
   </div>
 
   <!-- ==================== MODAL GENERICO ====================

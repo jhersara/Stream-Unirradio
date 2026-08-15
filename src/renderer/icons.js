@@ -23,7 +23,9 @@
     check: `<polyline points="20 6 9 17 4 12"/>`,
     radio: `<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 1 7 0"/><path d="M5.5 5.5a9 9 0 0 1 13 0"/><path d="M15.5 15.5a5 5 0 0 1-7 0"/><path d="M18.5 18.5a9 9 0 0 1-13 0"/>`,
     refresh: `<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>`,
-    history: `<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3.5 2"/>`
+    history: `<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3.5 2"/>`,
+    compact: `<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="13" y="13" width="6" height="6" rx="1"/>`,
+    expand: `<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>`
   };
 
   function renderIcon(name, sizePx) {

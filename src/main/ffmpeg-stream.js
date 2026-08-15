@@ -12,6 +12,7 @@ const {
   sendVuLevel,
   sendPreviewVuLevel,
   sendSpectrum,
+  sendDeadAir,
   sendIntroProgress,
   sendOutroProgress
 } = require('./ipc-events');
@@ -25,6 +26,9 @@ const CHUNK_MS = 50;
 const VU_EMIT_INTERVAL_MS = 66;
 const SPECTRUM_FFT_SIZE = 512;
 const SPECTRUM_BAND_COUNT = 24;
+const RECONNECT_DELAYS_MS = [3000, 6000, 12000, 24000, 30000];
+const SILENCE_PEAK_THRESHOLD = 0.02; // ~ -34dB: bajo pero no absoluto, evita falsos positivos
+const DEAD_AIR_SECONDS = 15;
 
 // Solo se soporta UNA sesion de transmision activa a la vez (coincide con el
 // diseno de un unico boton Iniciar/Detener en la interfaz).
@@ -284,6 +288,84 @@ function computePeakDb(buffer) {
 }
 
 // ---------------------------------------------------------------------------
+// Ecualizador de espectro: FFT simple (radix-2 Cooley-Tukey, in-place) sobre
+// una ventana del audio en vivo, agrupada en bandas logaritmicas (mas
+// resolucion en graves, menos en agudos, como cualquier ecualizador visual).
+// Se calcula SOLO dentro del mismo bloque ya limitado a ~15/seg que usa el
+// vumetro (ver VU_EMIT_INTERVAL_MS) -- nunca en cada callback de audio, por
+// la misma razon documentada ahi: mas trabajo por callback puede hacer que
+// naudiodon se atrase y repita audio.
+// ---------------------------------------------------------------------------
+function fftInPlace(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let tmp = re[i]; re[i] = re[j]; re[j] = tmp;
+      tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    const wRe = Math.cos(ang);
+    const wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1;
+      let curIm = 0;
+      const half = len / 2;
+      for (let j = 0; j < half; j++) {
+        const uRe = re[i + j];
+        const uIm = im[i + j];
+        const vRe = re[i + j + half] * curRe - im[i + j + half] * curIm;
+        const vIm = re[i + j + half] * curIm + im[i + j + half] * curRe;
+        re[i + j] = uRe + vRe;
+        im[i + j] = uIm + vIm;
+        re[i + j + half] = uRe - vRe;
+        im[i + j + half] = uIm - vIm;
+        const nextRe = curRe * wRe - curIm * wIm;
+        const nextIm = curRe * wIm + curIm * wRe;
+        curRe = nextRe;
+        curIm = nextIm;
+      }
+    }
+  }
+}
+
+function computeSpectrum(buffer, bandCount) {
+  const availableFrames = Math.floor(buffer.length / 4); // stereo 16-bit = 4 bytes/frame
+  const sampleCount = Math.min(SPECTRUM_FFT_SIZE, availableFrames);
+  const re = new Float64Array(SPECTRUM_FFT_SIZE);
+  const im = new Float64Array(SPECTRUM_FFT_SIZE);
+
+  for (let i = 0; i < sampleCount; i++) {
+    const l = buffer.readInt16LE(i * 4);
+    const r = buffer.readInt16LE(i * 4 + 2);
+    const hann = sampleCount > 1 ? 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (sampleCount - 1)) : 1;
+    re[i] = ((l + r) / 2 / 32768) * hann;
+  }
+
+  fftInPlace(re, im);
+
+  const bins = SPECTRUM_FFT_SIZE / 2;
+  const bands = new Array(bandCount).fill(0);
+  for (let b = 0; b < bandCount; b++) {
+    const startBin = Math.max(1, Math.floor(Math.pow(bins, b / bandCount)));
+    const endBin = Math.max(startBin + 1, Math.floor(Math.pow(bins, (b + 1) / bandCount)));
+    let sum = 0;
+    let count = 0;
+    for (let i = startBin; i < Math.min(endBin, bins); i++) {
+      sum += Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+      count++;
+    }
+    const avg = count > 0 ? sum / count : 0;
+    bands[b] = Math.min(1, Math.sqrt(avg) * 2.2);
+  }
+  return bands;
+}
+
+// ---------------------------------------------------------------------------
 // Cierre ordenado de un proceso hijo (ffmpeg): cerrar stdin (EOF) y ESPERAR
 // a que termine solo antes de matarlo. Si se mata de inmediato (SIGTERM) sin
 // dar tiempo a vaciar el encoder, el archivo/stream queda con la cola sin
@@ -346,15 +428,104 @@ function wireEncoderProcessEvents(mainWindow, encoderProcess) {
 
   encoderProcess.on('error', (err) => {
     sendLog(mainWindow, `ERROR de FFmpeg: ${err.message}`);
-    handleUnexpectedTermination(mainWindow);
+    handleEncoderDrop(mainWindow, encoderProcess);
   });
 
   encoderProcess.on('close', (code) => {
-    if (session && session.encoderProcess === encoderProcess && !session.stopRequested) {
-      sendLog(mainWindow, `ERROR: FFmpeg se cerro inesperadamente (codigo ${code}).`);
-      handleUnexpectedTermination(mainWindow);
-    }
+    if (!session || session.encoderProcess !== encoderProcess || session.stopRequested) return;
+    sendLog(mainWindow, `ERROR: FFmpeg se cerro inesperadamente (codigo ${code}).`);
+    handleEncoderDrop(mainWindow, encoderProcess);
   });
+}
+
+/**
+ * Se dispara cuando el proceso encoder muere sin que el usuario haya
+ * pedido detener. Durante 'live' o 'intro' se intenta RECONECTAR solo
+ * (ver attemptReconnect); en cualquier otra fase (incluida una
+ * reconexion ya en curso, o el chequeo inicial de conexion en
+ * startStream, que maneja su propio fallo por separado) simplemente se
+ * ignora aqui para no manejar el mismo fallo dos veces.
+ */
+function handleEncoderDrop(mainWindow, encoderProcess) {
+  if (!session || session.encoderProcess !== encoderProcess || session.stopRequested) return;
+  if (session.phase === 'live' || session.phase === 'intro') {
+    attemptReconnect(mainWindow);
+  } else if (session.phase === 'connecting') {
+    // startStream ya revisa el estado del proceso despues de su propia
+    // espera inicial; no duplicar el manejo del error aqui.
+  } else {
+    handleUnexpectedTermination(mainWindow);
+  }
+}
+
+/**
+ * Reconexion automatica: la captura de microfono (naudiodon) y la
+ * grabacion local NO se detienen durante los reintentos -- solo se
+ * quedan sin encoder al que escribir por un momento (writeToEncoder ya
+ * es seguro si session.encoderProcess esta muerto/nulo). Esto evita
+ * reabrir el dispositivo de audio repetidamente y mantiene la grabacion
+ * local continua durante el corte.
+ */
+async function attemptReconnect(mainWindow) {
+  if (!session || session.stopRequested) return;
+
+  session.phase = 'reconnecting';
+  session.reconnectAttempt = (session.reconnectAttempt || 0) + 1;
+  const attempt = session.reconnectAttempt;
+
+  if (attempt > RECONNECT_DELAYS_MS.length) {
+    sendLog(mainWindow, `No se pudo reconectar tras ${RECONNECT_DELAYS_MS.length} intentos. Cortando la transmision.`);
+    handleUnexpectedTermination(mainWindow);
+    return;
+  }
+
+  const delay = RECONNECT_DELAYS_MS[attempt - 1];
+  sendStatus(mainWindow, 'reconnecting', elapsedSeconds());
+  sendLog(mainWindow, `Conexion perdida. Reintentando en ${Math.round(delay / 1000)}s (intento ${attempt}/${RECONNECT_DELAYS_MS.length})...`);
+
+  await wait(delay);
+  if (!session || session.stopRequested) return;
+
+  const config = session.config;
+  let icecastUrl;
+  try {
+    icecastUrl = buildIcecastUrl(config);
+  } catch (err) {
+    sendLog(mainWindow, `ERROR de configuracion al reconectar: ${err.message}`);
+    handleUnexpectedTermination(mainWindow);
+    return;
+  }
+
+  const ffmpegPath = resolveFfmpegPath();
+  const args = buildEncoderArgs(icecastUrl);
+  sendLog(mainWindow, `Reintentando conexion con ${config.server}:${config.port}/${config.mount} (intento ${attempt}/${RECONNECT_DELAYS_MS.length})...`);
+
+  let encoderProcess;
+  try {
+    encoderProcess = spawn(ffmpegPath, args, { windowsHide: true });
+  } catch (err) {
+    sendLog(mainWindow, `ERROR reintentando: ${err.message}`);
+    attemptReconnect(mainWindow);
+    return;
+  }
+
+  session.encoderProcess = encoderProcess;
+  wireEncoderProcessEvents(mainWindow, encoderProcess);
+
+  await wait(700);
+  if (!session || session.stopRequested) return;
+
+  if (session.encoderProcess !== encoderProcess || encoderProcess.exitCode !== null) {
+    // Este intento fallo (o ya se reemplazo por otro reintento en curso);
+    // seguir con el siguiente intento de la lista.
+    attemptReconnect(mainWindow);
+    return;
+  }
+
+  sendLog(mainWindow, 'Reconectado correctamente. Continuando en vivo.');
+  session.reconnectAttempt = 0;
+  session.phase = 'live';
+  sendStatus(mainWindow, 'live', elapsedSeconds());
 }
 
 function wireRecorderProcessEvents(mainWindow, recorderProcess) {
@@ -656,6 +827,7 @@ function beginLiveCapture(mainWindow) {
       lastVuEmit = now;
       const { peak, db } = computePeakDb(gained);
       sendVuLevel(mainWindow, peak, db);
+      sendSpectrum(mainWindow, computeSpectrum(gained, SPECTRUM_BAND_COUNT));
     }
   });
 

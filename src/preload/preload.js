@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('streamAPI', {
   listLibrary: () => ipcRenderer.invoke('library:list'),
   importTracks: () => ipcRenderer.invoke('library:import'),
   deleteTrack: (id) => ipcRenderer.invoke('library:delete', id),
+  getTrackAudio: (id) => ipcRenderer.invoke('library:get-audio', id),
 
   // Configuracion persistida (servidor, credenciales, pistas activas)
   loadSettings: () => ipcRenderer.invoke('settings:load'),
@@ -34,10 +35,14 @@ contextBridge.exposeInMainWorld('streamAPI', {
   listHistory: () => ipcRenderer.invoke('history:list'),
   revealRecording: (filePath) => ipcRenderer.invoke('history:reveal-recording', filePath),
 
+  // Modo mini-ventana flotante
+  setCompactMode: (enabled) => ipcRenderer.invoke('window:set-compact', enabled),
+
   onLog: (callback) => subscribe('stream:log', callback),
   onStatus: (callback) => subscribe('stream:status', callback),
   onVuLevel: (callback) => subscribe('stream:vu-level', callback),
   onPreviewVuLevel: (callback) => subscribe('stream:preview-vu-level', callback),
+  onSpectrum: (callback) => subscribe('stream:spectrum', callback),
   onIntroProgress: (callback) => subscribe('stream:intro-progress', callback),
   onOutroProgress: (callback) => subscribe('stream:outro-progress', callback),
   onUpdateState: (callback) => subscribe('app:update-state', callback)

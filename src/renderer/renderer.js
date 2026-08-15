@@ -4,6 +4,7 @@
 
 const VU_SEGMENT_COUNT = 28;
 const MIC_TEST_SEGMENT_COUNT = 20;
+const SPECTRUM_BAND_COUNT = 24;
 
 const els = {
   // Activity bar
@@ -19,6 +20,7 @@ const els = {
 
   vuMeter: document.getElementById('vu-meter'),
   vuDbValue: document.getElementById('vu-db-value'),
+  spectrumMeter: document.getElementById('spectrum-meter'),
 
   gainSlider: document.getElementById('gain-slider'),
   gainValue: document.getElementById('gain-value'),
@@ -75,12 +77,25 @@ const els = {
   modalOverlay: document.getElementById('app-modal-overlay'),
   modalTitle: document.getElementById('app-modal-title'),
   modalMessage: document.getElementById('app-modal-message'),
-  modalActions: document.getElementById('app-modal-actions')
+  modalActions: document.getElementById('app-modal-actions'),
+
+  // Modo mini-ventana
+  appShell: document.querySelector('.app-shell'),
+  compactBar: document.getElementById('compact-bar'),
+  compactDot: document.getElementById('compact-dot'),
+  compactStatus: document.getElementById('compact-status'),
+  compactTimer: document.getElementById('compact-timer'),
+  btnToggleCompact: document.getElementById('btn-toggle-compact'),
+  btnCompactStop: document.getElementById('btn-compact-stop'),
+  btnCompactRestore: document.getElementById('btn-compact-restore')
 };
 
 let libraryCache = { tracks: [] };
 let micTestActive = false;
 let latestUpdateInfo = null;
+let isCompactMode = false;
+const previewAudio = new Audio();
+let previewingTrackId = null;
 
 // ---------------------------------------------------------------------------
 // Iconos: cualquier elemento con [data-icon="nombre"] recibe el SVG.
@@ -182,6 +197,28 @@ function updateSegmentedMeter(container, count, peak) {
 }
 
 // ---------------------------------------------------------------------------
+// Ecualizador de espectro: barras de altura variable, una por banda de
+// frecuencia (ver computeSpectrum en ffmpeg-stream.js). Se construyen una
+// sola vez y solo se les cambia la altura en cada evento.
+// ---------------------------------------------------------------------------
+function buildSpectrumMeter() {
+  els.spectrumMeter.innerHTML = '';
+  for (let i = 0; i < SPECTRUM_BAND_COUNT; i += 1) {
+    const bar = document.createElement('div');
+    bar.className = 'spectrum-bar';
+    els.spectrumMeter.appendChild(bar);
+  }
+}
+
+function updateSpectrumMeter(bands) {
+  const bars = els.spectrumMeter.children;
+  for (let i = 0; i < bars.length && i < bands.length; i += 1) {
+    const pct = Math.min(1, Math.max(0, bands[i]));
+    bars[i].style.height = `${Math.max(2, pct * 40)}px`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Utilidades de formato
 // ---------------------------------------------------------------------------
 function formatClock(totalSeconds) {
@@ -249,9 +286,14 @@ function setOnAirState(kind, elapsedSeconds) {
   els.statusbarText.textContent = preset.text;
   els.statusBar.classList.toggle('is-live', kind === 'live' || kind === 'error');
 
+  els.compactDot.className = `onair-dot ${preset.dotClass}`.trim();
+  els.compactStatus.textContent = preset.text;
+  els.btnCompactStop.style.visibility = (kind === 'idle' || kind === 'error') ? 'hidden' : 'visible';
+
   if (typeof elapsedSeconds === 'number') {
     els.onairTimer.textContent = formatClock(elapsedSeconds);
     els.statusbarTimer.textContent = formatClock(elapsedSeconds);
+    els.compactTimer.textContent = formatClock(elapsedSeconds);
   }
 }
 
@@ -395,7 +437,9 @@ function renderTrackList(container, tracks) {
     const item = document.createElement('div');
     item.className = 'track-item';
     item.innerHTML = `
-      <span class="track-item-icon">${window.renderIcon('library', 16)}</span>
+      <button type="button" class="btn-icon-only" data-preview-id="${track.id}" title="Escuchar">
+        ${window.renderIcon('play', 14)}
+      </button>
       <div class="track-item-info">
         <span class="track-item-name">${escapeHtml(track.name)}</span>
         <span class="track-item-meta">${formatShort(track.durationSeconds)}</span>
@@ -436,6 +480,7 @@ function handleLibraryDeleteClick(event) {
   if (!btn) return;
   window.SoundFX.click();
   const id = btn.getAttribute('data-delete-id');
+  if (previewingTrackId === id) stopTrackPreview();
   window.streamAPI.deleteTrack(id).then((library) => {
     libraryCache = library;
     refreshLibraryUI();
@@ -444,6 +489,50 @@ function handleLibraryDeleteClick(event) {
 }
 
 els.trackList.addEventListener('click', handleLibraryDeleteClick);
+
+// ---------------------------------------------------------------------------
+// Vista previa de audio (escuchar una pista antes de elegirla). Un solo
+// <audio> compartido: si ya sonaba otra pista, se detiene sola al empezar
+// la nueva.
+// ---------------------------------------------------------------------------
+function stopTrackPreview() {
+  previewAudio.pause();
+  if (previewingTrackId) {
+    const prevBtn = els.trackList.querySelector(`[data-preview-id="${previewingTrackId}"]`);
+    if (prevBtn) prevBtn.innerHTML = window.renderIcon('play', 14);
+  }
+  previewingTrackId = null;
+}
+
+prewireTrackPreviewEndedHandler();
+function prewireTrackPreviewEndedHandler() {
+  previewAudio.addEventListener('ended', stopTrackPreview);
+}
+
+async function toggleTrackPreview(id, btn) {
+  if (previewingTrackId === id) {
+    stopTrackPreview();
+    return;
+  }
+  stopTrackPreview();
+  const result = await window.streamAPI.getTrackAudio(id);
+  if (!result || !result.dataUrl) {
+    window.SoundFX.error();
+    appendLog('No se pudo cargar el audio de la pista.');
+    return;
+  }
+  previewAudio.src = result.dataUrl;
+  previewAudio.play();
+  previewingTrackId = id;
+  btn.innerHTML = window.renderIcon('stop', 14);
+}
+
+els.trackList.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-preview-id]');
+  if (!btn) return;
+  window.SoundFX.click();
+  toggleTrackPreview(btn.getAttribute('data-preview-id'), btn);
+});
 
 // ---------------------------------------------------------------------------
 // Historial de transmisiones
@@ -765,6 +854,10 @@ window.streamAPI.onVuLevel((payload) => {
   els.vuDbValue.textContent = payload.db <= -100 ? '-inf dB' : `${payload.db.toFixed(1)} dB`;
 });
 
+window.streamAPI.onSpectrum((payload) => {
+  updateSpectrumMeter(payload.bands || []);
+});
+
 window.streamAPI.onPreviewVuLevel((payload) => {
   updateSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT, payload.peak);
   els.micTestDb.textContent = payload.db <= -100 ? '-inf dB' : `${payload.db.toFixed(1)} dB`;
@@ -803,6 +896,7 @@ async function bootstrap() {
   paintIcons();
   buildSegmentedMeter(els.vuMeter, VU_SEGMENT_COUNT);
   buildSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT);
+  buildSpectrumMeter();
   await loadDevices();
   await loadLibrary();
   // La configuracion guardada se aplica DESPUES de cargar la biblioteca:
@@ -815,3 +909,32 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+// ---------------------------------------------------------------------------
+// Modo mini-ventana flotante (siempre-encima, compacto). Entra siempre por
+// la vista Estudio: no tiene sentido un mini-reproductor mostrando la
+// Biblioteca o el Historial.
+// ---------------------------------------------------------------------------
+async function setCompactMode(enabled) {
+  const result = await window.streamAPI.setCompactMode(enabled);
+  isCompactMode = result.compact;
+  els.appShell.hidden = isCompactMode;
+  els.compactBar.hidden = !isCompactMode;
+  if (isCompactMode) {
+    switchView('studio');
+  }
+}
+
+els.btnToggleCompact.addEventListener('click', () => {
+  window.SoundFX.click();
+  setCompactMode(true);
+});
+
+els.btnCompactRestore.addEventListener('click', () => {
+  window.SoundFX.click();
+  setCompactMode(false);
+});
+
+els.btnCompactStop.addEventListener('click', () => {
+  els.btnStop.click();
+});

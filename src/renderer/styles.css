@@ -1,32 +1,45 @@
 /* =====================================================
-   VARIABLES — estilo Visual Studio Code (Dark+) con los
-   acentos de marca UNIR Radio conservados en vez del azul
-   por defecto de VS Code (#007acc). Estructura neutra
-   (fondos, bordes, texto) tomada del tema Dark+ real.
+   VARIABLES — paleta de marca 2026 (violeta -> magenta),
+   sobre la misma estructura de layout tipo VS Code Dark+
+   (activity bar + contenido + status bar) que ya tenia la
+   app. Los 3 tonos neutros de fondo siguen la progresion
+   de la guia de marca: Negro Profundo -> Gris Oscuro ->
+   Gris Medio, para dar sensacion de profundidad/capas.
    ===================================================== */
 :root {
-  --bg-editor: #1e1e1e;
-  --bg-elevated: #252526;
-  --bg-activitybar: #333333;
-  --bg-input: #3c3c3c;
-  --bg-hover: #2a2d2e;
-  --bg-selected: #37373d;
-  --border: #3c3c3c;
+  /* Fondos / superficies (paleta neutra de marca) */
+  --bg-editor: #0d0d0d;        /* Negro Profundo */
+  --bg-elevated: #1a1a1a;      /* Gris Oscuro */
+  --bg-activitybar: #1a1a1a;
+  --bg-input: #2e2e2e;         /* Gris Medio */
+  --bg-hover: #2e2e2e;
+  --bg-selected: #35234f;      /* violeta muy oscuro, para estados seleccionados */
+  --border: #2e2e2e;
 
-  --text: #cccccc;
+  /* Texto */
+  --text: #e9e9ec;
   --text-bright: #ffffff;
-  --text-muted: #8a8a8a;
+  --text-muted: #9a97a6;
 
-  /* Acentos de marca UNIR Radio */
-  --primary: #13294b;
-  --primary-light: #1d4179;
-  --gold: #fcc332;
-  --gold-dim: #d9a62a;
-  --danger: #f14c4c;
-  --success: #89d185;
+  /* Marca: violeta -> magenta */
+  --violet: #8a4dff;
+  --violet-dim: #7440d6;
+  --magenta: #ff4dcc;
+  --lavender: #e9d6ff;
+  --gradient-brand: linear-gradient(135deg, #8a4dff 0%, #ff4dcc 100%);
+  --statusbar-bg: #351c66;
 
-  --radius: 3px;
-  --transition: .12s ease;
+  /* Semantico (vumetro / estados) — deliberadamente separado de la
+     marca: verde/ambar/rojo son convenciones universales de medidor de
+     audio y no deben confundirse con los acentos de marca violeta. */
+  --danger: #ff4d6a;
+  --danger-dim: #d43a54;
+  --success: #37d67a;
+  --caution: #ffb84d;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+  --transition: .15s ease;
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Segoe WPC', Tahoma, Arial, sans-serif;
   --font-mono: Consolas, 'Courier New', monospace;
@@ -53,13 +66,16 @@ button, input, select {
 }
 
 /* =====================================================
-   LAYOUT GENERAL — activity bar + contenido + status bar,
-   igual que la ventana principal de VS Code.
+   LAYOUT GENERAL — activity bar + contenido + status bar.
    ===================================================== */
 .app-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+.app-shell[hidden] {
+  display: none;
 }
 
 .workbench {
@@ -75,6 +91,7 @@ button, input, select {
   width: 48px;
   flex-shrink: 0;
   background: var(--bg-activitybar);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -84,15 +101,16 @@ button, input, select {
   width: 30px;
   height: 30px;
   margin: 9px 0 8px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-light));
-  color: var(--gold);
+  border-radius: 8px;
+  background: var(--gradient-brand);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 11px;
   flex-shrink: 0;
+  box-shadow: 0 0 12px rgba(138, 77, 255, .45);
 }
 
 .activity-items {
@@ -130,7 +148,8 @@ button, input, select {
   top: 8px;
   bottom: 8px;
   width: 2px;
-  background: var(--gold);
+  border-radius: 0 2px 2px 0;
+  background: var(--gradient-brand);
 }
 
 .activity-icon {
@@ -147,8 +166,8 @@ button, input, select {
   margin: auto auto 12px;
   border: none;
   border-radius: 50%;
-  background: rgba(252, 195, 50, .16);
-  color: var(--gold);
+  background: rgba(138, 77, 255, .18);
+  color: var(--violet);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -157,7 +176,7 @@ button, input, select {
 }
 
 .activity-update-badge:hover {
-  background: rgba(252, 195, 50, .28);
+  background: rgba(138, 77, 255, .3);
 }
 
 .activity-update-dot {
@@ -167,8 +186,8 @@ button, input, select {
 }
 
 @keyframes update-badge-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(252, 195, 50, .35); }
-  50%      { box-shadow: 0 0 0 5px rgba(252, 195, 50, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(138, 77, 255, .4); }
+  50%      { box-shadow: 0 0 0 5px rgba(138, 77, 255, 0); }
 }
 
 /* =====================================================
@@ -220,7 +239,7 @@ button, input, select {
 .section-subtitle {
   font-size: 11px;
   font-weight: 700;
-  color: var(--gold);
+  color: var(--violet);
   text-transform: uppercase;
   letter-spacing: .06em;
   margin: 22px 0 4px 0;
@@ -257,13 +276,13 @@ button, input, select {
 }
 
 .onair-dot.is-connecting {
-  background: var(--gold);
+  background: var(--violet);
   animation: onair-pulse-soft 1s ease-in-out infinite;
 }
 
 @keyframes onair-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(241, 76, 76, .5); }
-  50%      { box-shadow: 0 0 0 6px rgba(241, 76, 76, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 106, .5); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 77, 106, 0); }
 }
 
 @keyframes onair-pulse-soft {
@@ -300,9 +319,12 @@ button, input, select {
 .onair-timer {
   font-family: var(--font-mono);
   font-size: 24px;
-  font-weight: 600;
-  color: var(--gold);
+  font-weight: 700;
   letter-spacing: .02em;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* =====================================================
@@ -337,7 +359,7 @@ button, input, select {
 .icon-inline {
   display: inline-flex;
   align-items: center;
-  color: var(--gold);
+  color: var(--violet);
 }
 
 .mono-value {
@@ -368,7 +390,7 @@ button, input, select {
 }
 
 .vu-segment.is-lit-yellow {
-  background: var(--gold);
+  background: var(--caution);
 }
 
 .vu-segment.is-lit-red {
@@ -390,7 +412,27 @@ button, input, select {
 
 .gain-row input[type='range'] {
   flex: 1;
-  accent-color: var(--gold);
+  accent-color: var(--violet);
+}
+
+/* =====================================================
+   ESPECTRO
+   ===================================================== */
+.spectrum-meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 40px;
+  margin-top: 10px;
+}
+
+.spectrum-bar {
+  flex: 1;
+  min-height: 2px;
+  height: 2px;
+  border-radius: 1px 1px 0 0;
+  background: var(--gradient-brand);
+  transition: height .05s linear;
 }
 
 /* =====================================================
@@ -407,7 +449,7 @@ button, input, select {
 .progress-fill {
   height: 100%;
   width: 0%;
-  background: var(--gold);
+  background: var(--gradient-brand);
   transition: width .15s linear;
 }
 
@@ -422,9 +464,9 @@ button, input, select {
   border: none;
   border-radius: var(--radius);
   font-family: inherit;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background var(--transition), opacity var(--transition);
+  transition: filter var(--transition), background var(--transition), opacity var(--transition);
 }
 
 .button-row {
@@ -444,12 +486,12 @@ button, input, select {
 }
 
 .btn-primary {
-  background: var(--gold);
-  color: #1e1e1e;
+  background: var(--gradient-brand);
+  color: #ffffff;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--gold-dim);
+  filter: brightness(1.1);
 }
 
 .btn-danger {
@@ -458,7 +500,7 @@ button, input, select {
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: #e33c3c;
+  background: var(--danger-dim);
 }
 
 .btn-primary:disabled, .btn-danger:disabled {
@@ -473,18 +515,19 @@ button, input, select {
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 11.5px;
+  font-weight: 500;
 }
 
 .btn-secondary:hover {
   background: var(--bg-hover);
-  border-color: var(--text-muted);
+  border-color: var(--violet);
 }
 
 .btn-icon-only {
   width: 26px;
   height: 26px;
   padding: 0;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -526,7 +569,7 @@ button, input, select {
   font-weight: 600;
   letter-spacing: .05em;
   color: var(--text);
-  border-bottom: 1px solid var(--gold);
+  border-bottom: 1px solid var(--violet);
   margin-bottom: -1px;
 }
 
@@ -576,7 +619,7 @@ button, input, select {
   padding: 0 10px;
   background: var(--bg-input);
   border: 1px solid var(--bg-input);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   color: var(--text);
   font-size: 12.5px;
 }
@@ -584,7 +627,7 @@ button, input, select {
 .field input:focus,
 .field select:focus {
   outline: none;
-  border-color: var(--gold);
+  border-color: var(--violet);
 }
 
 .mic-test-row {
@@ -625,7 +668,7 @@ button, input, select {
 }
 
 .checkbox-label input[type='checkbox'] {
-  accent-color: var(--gold);
+  accent-color: var(--violet);
   width: 13px;
   height: 13px;
 }
@@ -646,7 +689,7 @@ button, input, select {
   padding: 0 8px 0 10px;
   background: var(--bg-input);
   border: 1px solid var(--bg-input);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   color: var(--text);
   font-family: inherit;
   font-size: 12.5px;
@@ -664,7 +707,7 @@ button, input, select {
 }
 
 .track-picker.is-open .track-picker-trigger {
-  border-color: var(--gold);
+  border-color: var(--violet);
 }
 
 .track-picker-trigger-text {
@@ -691,7 +734,7 @@ button, input, select {
 
 .track-picker.is-open .track-picker-trigger-icon {
   transform: rotate(90deg);
-  color: var(--gold);
+  color: var(--violet);
 }
 
 .track-picker-menu {
@@ -714,7 +757,7 @@ button, input, select {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
@@ -726,7 +769,7 @@ button, input, select {
 
 .track-picker-option.is-selected {
   background: var(--bg-selected);
-  color: var(--gold);
+  color: var(--lavender);
 }
 
 .track-picker-option-check {
@@ -801,9 +844,9 @@ button, input, select {
 .track-item-icon {
   width: 28px;
   height: 28px;
-  border-radius: var(--radius);
-  background: rgba(252, 195, 50, .1);
-  color: var(--gold);
+  border-radius: var(--radius-sm);
+  background: rgba(138, 77, 255, .14);
+  color: var(--violet);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -855,9 +898,9 @@ button, input, select {
 .history-item-icon {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius);
-  background: rgba(252, 195, 50, .1);
-  color: var(--gold);
+  border-radius: var(--radius-sm);
+  background: rgba(138, 77, 255, .14);
+  color: var(--violet);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -901,15 +944,16 @@ button, input, select {
 .about-mark {
   width: 56px;
   height: 56px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-light));
-  color: var(--gold);
+  border-radius: 12px;
+  background: var(--gradient-brand);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 18px;
   flex-shrink: 0;
+  box-shadow: 0 0 20px rgba(255, 77, 204, .35);
 }
 
 .about-text {
@@ -943,7 +987,7 @@ button, input, select {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, .55);
+  background: rgba(0, 0, 0, .6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -965,9 +1009,9 @@ button, input, select {
   max-width: calc(100vw - 40px);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5), 0 0 40px rgba(138, 77, 255, .12);
 }
 
 .modal-title {
@@ -1003,7 +1047,7 @@ button, input, select {
 .status-bar {
   height: 22px;
   flex-shrink: 0;
-  background: var(--primary);
+  background: var(--statusbar-bg);
   color: #ffffff;
   display: flex;
   align-items: center;
@@ -1014,7 +1058,7 @@ button, input, select {
 }
 
 .status-bar.is-live {
-  background: #a1260d;
+  background: #7a1538;
 }
 
 .status-bar-group {
@@ -1049,8 +1093,61 @@ button, input, select {
 }
 
 .statusbar-dot.is-connecting {
-  background: var(--gold);
+  background: var(--lavender);
   animation: onair-pulse-soft 1s ease-in-out infinite;
+}
+
+.status-bar .btn-icon-only {
+  width: 20px;
+  height: 20px;
+  color: rgba(255, 255, 255, .7);
+}
+
+.status-bar .btn-icon-only:hover {
+  background: rgba(255, 255, 255, .16);
+  color: #ffffff;
+}
+
+/* =====================================================
+   BARRA COMPACTA (modo mini-ventana flotante)
+   ===================================================== */
+.compact-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100vh;
+  padding: 0 12px;
+  background: var(--bg-editor);
+}
+
+.compact-bar[hidden] {
+  display: none;
+}
+
+.compact-labels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.compact-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-timer {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* =====================================================
@@ -1066,11 +1163,11 @@ button, input, select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(121, 121, 121, .4);
+  background: rgba(138, 77, 255, .25);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(121, 121, 121, .6);
+  background: rgba(138, 77, 255, .45);
 }
 
 /* =====================================================
