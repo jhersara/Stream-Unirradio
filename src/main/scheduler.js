@@ -45,13 +45,18 @@ function checkSchedule(mainWindow) {
     lastTriggeredKey = `start-${todayKey}`;
     sendLog(mainWindow, `Programacion automatica: iniciando transmision (${schedule.startTime}).`);
     const settings = settingsStore.loadSettings();
-    ffmpegStream.startStream(mainWindow, { ...settings, recordSession: schedule.autoRecord });
+    ffmpegStream.startStream(mainWindow, {
+      ...settings,
+      recordSession: schedule.autoRecord,
+      scheduled: true,
+      recordingSavePrompt: false
+    });
   }
 
   if (currentTime === schedule.stopTime && lastTriggeredKey !== `stop-${todayKey}` && ffmpegStream.isStreaming()) {
     lastTriggeredKey = `stop-${todayKey}`;
     sendLog(mainWindow, `Programacion automatica: deteniendo transmision (${schedule.stopTime}).`);
-    ffmpegStream.stopStream(mainWindow);
+    ffmpegStream.stopStream(mainWindow, { promptRecording: false });
   }
 }
 

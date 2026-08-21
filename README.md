@@ -42,7 +42,7 @@ En ventanas pequeñas, la navegación lateral se transforma en un menú desplega
 | Motor de audio | Captura nativa con `naudiodon` y procesamiento con FFmpeg. |
 | Transiciones | Intro antes de abrir el micrófono y outro diferido al detener la sesión. |
 | Pausa | Pausa y reanudación manteniendo la conexión activa y enviando silencio controlado. |
-| Grabación local | Confirmación opcional al iniciar; guarda la sesión como MP3 en Documentos. |
+| Grabación local | Confirmación opcional al iniciar; al detener permite definir nombre y carpeta mediante un selector de guardado, con Documentos como destino predeterminado. |
 | Biblioteca | Importación múltiple, almacenamiento persistente, eliminación y preescucha. |
 | Podcast Studio | Episodios, grabación de voz, clips, línea de tiempo, exportación MP3, ducking y medición opcional. |
 | Monitorización | Vúmetro, pico retenido, RMS, estéreo L/R, clip y ecualizador de 24 bandas. |
@@ -237,7 +237,7 @@ Las pruebas de conexión real dependen de las credenciales del servidor de radio
 | No conecta con Icecast | Verifica host, puerto, usuario, contraseña y mountpoint copiados desde el panel del proveedor. |
 | SHOUTcast rechaza la fuente | Selecciona el proveedor SHOUTcast y revisa el Stream ID cuando el panel lo requiera. |
 | La barra de actualización no aparece | Abre Información; el estado descargando debe mostrar porcentaje y la actualización terminada debe conservar la barra al 100%. |
-| La grabación local falla | Revisa la carpeta Documentos y el log; un fallo local no debería detener la transmisión. |
+| La grabación local falla | Revisa la carpeta Documentos o la carpeta elegida en el selector de guardado y el log; un fallo local no debería detener la transmisión. |
 | Aviso de GPU de Chromium | Es un aviso gráfico de Electron; no implica por sí mismo un fallo de audio. |
 | Aviso final de libmp3lame | El mensaje sobre la cola de muestras puede aparecer durante el cierre del encoder y no necesariamente indica una transmisión fallida. |
 

@@ -1,7 +1,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
+const { app, dialog } = require('electron');
 const { resolveFfmpegPath } = require('./media-probe');
 const libraryManager = require('./library-manager');
 const audioCapture = require('./audio-capture');
@@ -154,26 +154,110 @@ function buildRecorderArgs(outputPath) {
   ];
 }
 
-function buildRecordingPath() {
-  const dir = path.join(app.getPath('documents'), 'Stream Radio - Grabaciones');
-  fs.mkdirSync(dir, { recursive: true });
+function buildRecordingFileStamp() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-  return path.join(dir, `transmision-${stamp}.mp3`);
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+}
+
+function buildDefaultRecordingPath(stamp = buildRecordingFileStamp()) {
+  const dir = path.join(app.getPath('documents'), 'Stream Radio - Grabaciones');
+  fs.mkdirSync(dir, { recursive: true });
+  const base = path.join(dir, `transmision-${stamp}`);
+  let candidate = `${base}.mp3`;
+  let suffix = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = `${base}-${suffix}.mp3`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function buildTemporaryRecordingPath(stamp = buildRecordingFileStamp()) {
+  const dir = path.join(app.getPath('temp'), 'Stream Radio - Grabaciones temporales');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `transmision-${stamp}-${process.pid}.partial.mp3`);
+}
+
+function ensureMp3Extension(filePath) {
+  return /\.mp3$/i.test(filePath) ? filePath : `${filePath}.mp3`;
+}
+
+async function chooseRecordingDestination(mainWindow, defaultPath) {
+  if (!mainWindow || mainWindow.isDestroyed()) return defaultPath;
+
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Guardar grabación de la transmisión',
+      defaultPath,
+      buttonLabel: 'Guardar grabación',
+      filters: [{ name: 'Grabación MP3', extensions: ['mp3'] }],
+      properties: ['showOverwriteConfirmation', 'createDirectory']
+    });
+
+    if (result.canceled || !result.filePath) {
+      sendLog(mainWindow, `No se seleccionó otra ubicación; se usará la carpeta predeterminada: ${defaultPath}`);
+      return defaultPath;
+    }
+
+    return ensureMp3Extension(result.filePath);
+  } catch (err) {
+    sendLog(mainWindow, `Aviso: no se pudo abrir el selector de guardado (${err.message}). Se usará la carpeta predeterminada.`);
+    return defaultPath;
+  }
+}
+
+function moveRecordingFile(sourcePath, destinationPath) {
+  if (!sourcePath || !fs.existsSync(sourcePath)) return null;
+  const destination = ensureMp3Extension(destinationPath);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+
+  try {
+    fs.renameSync(sourcePath, destination);
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err;
+    fs.copyFileSync(sourcePath, destination);
+    fs.unlinkSync(sourcePath);
+  }
+  return destination;
+}
+
+async function finalizeRecording(mainWindow, finishedSession) {
+  if (!finishedSession?.recordingRequested || !finishedSession.recordingTempPath) return null;
+  if (!fs.existsSync(finishedSession.recordingTempPath)) return null;
+
+  const defaultPath = buildDefaultRecordingPath(finishedSession.recordingStamp);
+  const destination = finishedSession.recordingSavePrompt === false
+    ? defaultPath
+    : await chooseRecordingDestination(mainWindow, defaultPath);
+
+  try {
+    const finalPath = moveRecordingFile(finishedSession.recordingTempPath, destination);
+    if (finalPath) {
+      sendLog(mainWindow, `Grabación guardada en: ${finalPath}`);
+      return finalPath;
+    }
+  } catch (err) {
+    sendLog(mainWindow, `Aviso: no se pudo mover la grabación a ${destination} (${err.message}).`);
+  }
+
+  return finishedSession.recordingTempPath;
 }
 
 function startLocalRecorder(mainWindow) {
   if (!session || !session.recordingRequested || session.stopRequested) return;
   try {
-    const recordingPath = buildRecordingPath();
-    const recorderProcess = spawn(resolveFfmpegPath(), buildRecorderArgs(recordingPath), { windowsHide: true });
+    const recordingStamp = buildRecordingFileStamp();
+    const recordingTempPath = buildTemporaryRecordingPath(recordingStamp);
+    const recorderProcess = spawn(resolveFfmpegPath(), buildRecorderArgs(recordingTempPath), { windowsHide: true });
     session.recorderProcess = recorderProcess;
-    session.recordingPath = recordingPath;
+    session.recordingTempPath = recordingTempPath;
+    session.recordingPath = recordingTempPath;
+    session.recordingStamp = recordingStamp;
     session.recorderBackpressured = false;
     session.recorderBackpressureWarned = false;
     wireRecorderProcessEvents(mainWindow, recorderProcess);
-    sendLog(mainWindow, `Grabación local iniciada: ${recordingPath}`);
+    sendLog(mainWindow, 'Grabación local iniciada. Al finalizar podrás elegir el nombre y la carpeta de destino.');
   } catch (err) {
     sendLog(mainWindow, `Aviso: no se pudo iniciar la grabación local (${err.message}). La transmisión sigue normal.`);
     session.recordingRequested = false;
@@ -872,6 +956,9 @@ async function startStream(mainWindow, rawConfig) {
     sourceBridge,
     recorderProcess: null,
     recordingPath: null,
+    recordingTempPath: null,
+    recordingStamp: null,
+    recordingSavePrompt: config.recordingSavePrompt !== false && config.scheduled !== true,
     inputStream: null,
     gain: config.gain,
     startedAt: null,
@@ -1058,7 +1145,7 @@ function togglePauseStream(mainWindow) {
 // ---------------------------------------------------------------------------
 // Detener: (opcional outro con corte diferido a -2s) -> cerrar conexion real
 // ---------------------------------------------------------------------------
-async function stopStream(mainWindow) {
+async function stopStream(mainWindow, options = {}) {
   if (!session && pendingStart) {
     pendingStart.stopRequested = true;
     pendingStart.sourceBridge?.close();
@@ -1074,6 +1161,7 @@ async function stopStream(mainWindow) {
   }
 
   session.stopRequested = true;
+  if (options.promptRecording === false) session.recordingSavePrompt = false;
   const phaseAtStop = session.phase;
 
   if (phaseAtStop === 'connecting' || phaseAtStop === 'intro' || phaseAtStop === 'reconnecting') {
@@ -1159,11 +1247,8 @@ async function teardownSession(mainWindow, finalStatusKind) {
     gracefullyEndProcess(finishedSession ? finishedSession.recorderProcess : null, 2500)
   ]);
 
+  finishedSession.recordingPath = await finalizeRecording(mainWindow, finishedSession);
   logHistoryEntry(finishedSession, 'manual');
-
-  if (finishedSession && finishedSession.recordingPath) {
-    sendLog(mainWindow, `Grabacion guardada en: ${finishedSession.recordingPath}`);
-  }
 
   sendDeadAir(mainWindow, false);
   sendStatus(mainWindow, finalStatusKind, 0);
