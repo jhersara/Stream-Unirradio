@@ -28,6 +28,7 @@
       "src/**/*",
       "package.json"
     ],
+    "artifactName": "Stream-Radio-Setup-${version}.${ext}",
     "extraResources": [
       {
         "from": "resources/ffmpeg/",
