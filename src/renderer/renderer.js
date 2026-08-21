@@ -184,6 +184,7 @@ let latestUpdateInfo = null;
 let isCompactMode = false;
 const previewAudio = new Audio();
 let previewingTrackId = null;
+let previewRequestToken = 0;
 let lastProviderId = 'zeno-icecast';
 let providerCatalog = [
   { id: 'zeno-icecast', label: 'Zeno.fm · Icecast', shortLabel: 'Zeno.fm', protocol: 'icecast', requiresUser: true, requiresMount: true, defaultPort: '80', defaultUser: 'source', serverPlaceholder: 'link.zeno.fm', mountPlaceholder: 'Copiar exactamente desde Broadcast Settings de Zeno.fm', help: 'Usa el servidor, puerto, mountpoint y contraseña que aparecen en Broadcast Settings de Zeno.fm.' },
@@ -737,12 +738,13 @@ function renderTrackList(container, tracks) {
     const item = document.createElement('div');
     item.className = 'track-item';
     item.innerHTML = `
-      <button type="button" class="btn-icon-only" data-preview-id="${track.id}" title="Escuchar">
+      <button type="button" class="btn-icon-only track-preview-button" data-preview-id="${track.id}" data-preview-state="idle" aria-label="Escuchar ${escapeHtml(track.name)}" aria-pressed="false" title="Escuchar pista">
         ${window.renderIcon('play', 14)}
       </button>
       <div class="track-item-info">
         <span class="track-item-name">${escapeHtml(track.name)}</span>
-        <span class="track-item-meta">${formatShort(track.durationSeconds)}</span>
+        <span class="track-item-meta"><span data-preview-time="${track.id}">00:00</span> / ${formatShort(track.durationSeconds)}</span>
+        <span class="track-item-progress" aria-hidden="true"><span data-preview-progress="${track.id}"></span></span>
       </div>
       <button type="button" class="btn-icon-only" data-delete-id="${track.id}" title="Eliminar">
         ${window.renderIcon('trash', 14)}
@@ -796,55 +798,128 @@ els.trackList.addEventListener('click', handleLibraryDeleteClick);
 // <audio> compartido: si ya sonaba otra pista, se detiene sola al empezar
 // la nueva.
 // ---------------------------------------------------------------------------
-function setPreviewButtonState(button, isPlaying) {
+function setPreviewButtonState(button, state) {
   if (!button) return;
-  button.innerHTML = window.renderIcon(isPlaying ? 'stop' : 'play', 14);
+  const isPlaying = state === 'playing';
+  const isLoading = state === 'loading';
+  const iconName = isPlaying ? 'pause' : 'play';
+  const label = isPlaying ? 'Pausar pista' : state === 'paused' ? 'Continuar pista' : 'Escuchar pista';
+  button.innerHTML = window.renderIcon(iconName, 14);
+  button.title = label;
+  button.setAttribute('aria-label', label);
   button.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+  button.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+  button.dataset.previewState = state;
   button.classList.toggle('is-playing', isPlaying);
+  button.classList.toggle('is-paused', state === 'paused');
+  button.classList.toggle('is-loading', isLoading);
+}
+
+function setPreviewButtonsForTrack(trackId, state) {
+  if (!trackId) return;
+  document.querySelectorAll(`[data-preview-id="${trackId}"]`).forEach((button) => {
+    setPreviewButtonState(button, state);
+  });
 }
 
 function resetPreviewButtons(trackId) {
   if (!trackId) return;
-  document.querySelectorAll('[data-preview-id]').forEach((button) => {
-    if (button.getAttribute('data-preview-id') === trackId) {
-      setPreviewButtonState(button, false);
-    }
+  document.querySelectorAll(`[data-preview-id="${trackId}"]`).forEach((button) => {
+    setPreviewButtonState(button, 'idle');
   });
+  const progress = document.querySelector(`[data-preview-progress="${trackId}"]`);
+  const time = document.querySelector(`[data-preview-time="${trackId}"]`);
+  if (progress) progress.style.width = '0%';
+  if (time) time.textContent = '00:00';
 }
 
 function stopTrackPreview() {
+  previewRequestToken += 1;
+  const previousTrackId = previewingTrackId;
+  previewingTrackId = null;
   previewAudio.pause();
   previewAudio.removeAttribute('src');
   previewAudio.load();
-  resetPreviewButtons(previewingTrackId);
-  previewingTrackId = null;
+  resetPreviewButtons(previousTrackId);
 }
 
 prewireTrackPreviewEndedHandler();
 function prewireTrackPreviewEndedHandler() {
+  previewAudio.addEventListener('loadedmetadata', () => {
+    if (!previewingTrackId) return;
+    const track = libraryCache.tracks.find((item) => item.id === previewingTrackId);
+    if (track && (!track.durationSeconds || track.durationSeconds <= 0) && Number.isFinite(previewAudio.duration)) {
+      track.durationSeconds = previewAudio.duration;
+    }
+  });
+  previewAudio.addEventListener('timeupdate', () => {
+    if (!previewingTrackId) return;
+    const progress = document.querySelector(`[data-preview-progress="${previewingTrackId}"]`);
+    const time = document.querySelector(`[data-preview-time="${previewingTrackId}"]`);
+    const duration = Number.isFinite(previewAudio.duration) ? previewAudio.duration : 0;
+    if (progress) progress.style.width = duration > 0 ? `${Math.min(100, (previewAudio.currentTime / duration) * 100)}%` : '0%';
+    if (time) time.textContent = formatShort(previewAudio.currentTime);
+  });
+  previewAudio.addEventListener('playing', () => {
+    setPreviewButtonsForTrack(previewingTrackId, 'playing');
+  });
+  previewAudio.addEventListener('pause', () => {
+    if (previewingTrackId && !previewAudio.ended) {
+      setPreviewButtonsForTrack(previewingTrackId, 'paused');
+    }
+  });
+  previewAudio.addEventListener('waiting', () => {
+    setPreviewButtonsForTrack(previewingTrackId, 'loading');
+  });
+  previewAudio.addEventListener('error', () => {
+    const failedId = previewingTrackId;
+    stopTrackPreview();
+    window.SoundFX.error();
+    appendLog(`No se pudo reproducir la pista importada${failedId ? ` (${failedId})` : ''}. Verifica que el archivo sea un formato compatible.`);
+  });
   previewAudio.addEventListener('ended', stopTrackPreview);
 }
 
 async function toggleTrackPreview(id, btn) {
   if (previewingTrackId === id) {
-    stopTrackPreview();
+    if (previewAudio.paused) {
+      try {
+        await previewAudio.play();
+        setPreviewButtonsForTrack(id, 'playing');
+      } catch {
+        setPreviewButtonsForTrack(id, 'paused');
+        appendLog('No se pudo reanudar la preescucha de la pista.');
+      }
+    } else {
+      previewAudio.pause();
+      setPreviewButtonsForTrack(id, 'paused');
+    }
     return;
   }
+
   stopTrackPreview();
+  const requestToken = previewRequestToken;
+  setPreviewButtonState(btn, 'loading');
   const result = await window.streamAPI.getTrackAudio(id);
+  if (requestToken !== previewRequestToken) return;
   if (!result || !result.dataUrl) {
+    setPreviewButtonState(btn, 'idle');
     window.SoundFX.error();
     appendLog('No se pudo cargar el audio de la pista.');
     return;
   }
+
   previewAudio.src = result.dataUrl;
   previewAudio.load();
   previewingTrackId = id;
-  setPreviewButtonState(btn, true);
   try {
     await previewAudio.play();
+    if (requestToken === previewRequestToken && previewingTrackId === id) {
+      setPreviewButtonsForTrack(id, 'playing');
+    }
   } catch {
-    setPreviewButtonState(btn, false);
+    if (requestToken !== previewRequestToken) return;
+    setPreviewButtonsForTrack(id, 'idle');
     previewingTrackId = null;
     appendLog('El navegador no pudo iniciar la preescucha de la pista.');
   }
