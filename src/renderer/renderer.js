@@ -160,6 +160,7 @@ const els = {
   statusbarTimer: document.getElementById('statusbar-timer'),
   statusbarGain: document.getElementById('statusbar-gain'),
   statusbarVersion: document.getElementById('statusbar-version'),
+  recordingSaveStatus: document.getElementById('recording-save-status'),
 
   // Modal generico
   modalOverlay: document.getElementById('app-modal-overlay'),
@@ -183,6 +184,7 @@ let micTestActive = false;
 let latestUpdateInfo = null;
 let isCompactMode = false;
 const previewAudio = new Audio();
+previewAudio.preload = 'metadata';
 let previewingTrackId = null;
 let previewRequestToken = 0;
 let lastProviderId = 'zeno-icecast';
@@ -205,7 +207,9 @@ const audioVisualState = {
   spectrumPeak: new Array(SPECTRUM_BAND_COUNT).fill(0),
   spectrumPeakUntil: new Array(SPECTRUM_BAND_COUNT).fill(0),
   lastFrameAt: 0,
+  lastPaintAt: 0,
   rafId: 0,
+  isActive: false,
   reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 };
 
@@ -432,17 +436,53 @@ function renderProfessionalSpectrum(now, deltaSeconds) {
 }
 
 function audioVisualFrame(now) {
+  if (!audioVisualState.isActive) {
+    audioVisualState.rafId = 0;
+    audioVisualState.lastFrameAt = 0;
+    audioVisualState.lastPaintAt = 0;
+    return;
+  }
+
   if (!audioVisualState.lastFrameAt) audioVisualState.lastFrameAt = now;
-  const deltaSeconds = Math.min(.08, Math.max(.001, (now - audioVisualState.lastFrameAt) / 1000));
+  const deltaSeconds = Math.min(.12, Math.max(.001, (now - audioVisualState.lastFrameAt) / 1000));
   audioVisualState.lastFrameAt = now;
-  renderProfessionalVu(now, deltaSeconds);
-  renderProfessionalSpectrum(now, deltaSeconds);
+
+  // El audio se actualiza más rápido que lo que necesita la pantalla. Limitar
+  // el pintado a 20 FPS mantiene una animación fluida con mucho menos CPU.
+  if (!audioVisualState.lastPaintAt || now - audioVisualState.lastPaintAt >= 50) {
+    audioVisualState.lastPaintAt = now;
+    renderProfessionalVu(now, deltaSeconds);
+    renderProfessionalSpectrum(now, deltaSeconds);
+  }
+
   audioVisualState.rafId = window.requestAnimationFrame(audioVisualFrame);
 }
 
-function startAudioVisualLoop() {
-  if (!audioVisualState.rafId) audioVisualState.rafId = window.requestAnimationFrame(audioVisualFrame);
+function stopAudioVisualFrame() {
+  if (audioVisualState.rafId) {
+    window.cancelAnimationFrame(audioVisualState.rafId);
+    audioVisualState.rafId = 0;
+  }
+  audioVisualState.lastFrameAt = 0;
+  audioVisualState.lastPaintAt = 0;
 }
+
+function setAudioVisualActive(active) {
+  audioVisualState.isActive = Boolean(active);
+  if (audioVisualState.isActive && !document.hidden) {
+    if (!audioVisualState.rafId) audioVisualState.rafId = window.requestAnimationFrame(audioVisualFrame);
+    return;
+  }
+  stopAudioVisualFrame();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopAudioVisualFrame();
+  } else if (audioVisualState.isActive && !audioVisualState.rafId) {
+    audioVisualState.rafId = window.requestAnimationFrame(audioVisualFrame);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Ecualizador de espectro: barras de altura variable, una por banda de
@@ -544,6 +584,7 @@ function syncBroadcastControls(kind) {
 
 function setOnAirState(kind, elapsedSeconds) {
   const preset = STATUS_PRESETS[kind] || STATUS_PRESETS.idle;
+  setAudioVisualActive(kind !== 'idle' && kind !== 'error');
   syncBroadcastControls(kind);
   els.onairDot.className = `onair-dot ${preset.dotClass}`.trim();
   els.onairStatus.textContent = preset.text;
@@ -900,16 +941,16 @@ async function toggleTrackPreview(id, btn) {
   stopTrackPreview();
   const requestToken = previewRequestToken;
   setPreviewButtonState(btn, 'loading');
-  const result = await window.streamAPI.getTrackAudio(id);
+  const result = await window.streamAPI.getTrackAudioUrl(id);
   if (requestToken !== previewRequestToken) return;
-  if (!result || !result.dataUrl) {
+  if (!result || !result.url) {
     setPreviewButtonState(btn, 'idle');
     window.SoundFX.error();
     appendLog('No se pudo cargar el audio de la pista.');
     return;
   }
 
-  previewAudio.src = result.dataUrl;
+  previewAudio.src = result.url;
   previewAudio.load();
   previewingTrackId = id;
   try {
@@ -1519,6 +1560,34 @@ window.streamAPI.onLog((payload) => {
   }
 });
 
+let recordingSaveStatusTimer = null;
+window.streamAPI.onRecordingSaveState((payload) => {
+  if (!els.recordingSaveStatus) return;
+  const state = payload?.state || 'processing';
+  const labels = {
+    processing: 'Procesando grabación…',
+    ready: 'Selecciona nombre y carpeta…',
+    saving: 'Guardando grabación…',
+    saved: 'Grabación guardada',
+    error: 'Error al guardar grabación'
+  };
+  els.recordingSaveStatus.hidden = false;
+  els.recordingSaveStatus.textContent = payload?.message || labels[state] || labels.processing;
+  els.recordingSaveStatus.dataset.state = state;
+  if (state === 'saved' || state === 'error') {
+    const historyView = document.querySelector('[data-view-panel="history"]');
+    if (historyView && historyView.classList.contains('view-active')) loadHistory();
+  }
+  clearTimeout(recordingSaveStatusTimer);
+  if (state === 'saved' || state === 'error') {
+    recordingSaveStatusTimer = window.setTimeout(() => {
+      els.recordingSaveStatus.hidden = true;
+      els.recordingSaveStatus.textContent = '';
+      delete els.recordingSaveStatus.dataset.state;
+    }, 8000);
+  }
+});
+
 window.streamAPI.onStatus((payload) => {
   // payload: { kind, elapsedSeconds }
   setOnAirState(payload.kind, payload.elapsedSeconds);
@@ -1609,6 +1678,7 @@ let activeEpisodeId = null;
 let podcastExportActive = false;
 let draggedTimelineIndex = null;
 const podcastPreviewAudio = new Audio();
+podcastPreviewAudio.preload = 'metadata';
 const podcastPreviewState = { index: null, start: 0, end: 0, baseVolume: 1, fadeIn: 0, fadeOut: 0, automation: [] };
 const podcastRecordingUi = {
   recording: false,
@@ -1676,8 +1746,8 @@ async function togglePodcastSegmentPreview(index, button) {
     return;
   }
   stopPodcastSegmentPreview();
-  const result = await window.streamAPI.getPodcastSegmentAudio(segment);
-  if (!result?.ok || !result.dataUrl) {
+  const result = await window.streamAPI.getPodcastSegmentAudioUrl(segment);
+  if (!result?.ok || !result.url) {
     appendLog('No se pudo cargar el audio del segmento.');
     window.SoundFX.error();
     return;
@@ -1693,7 +1763,7 @@ async function togglePodcastSegmentPreview(index, button) {
   podcastPreviewState.fadeIn = Math.max(0, Number(segment.fadeIn) || 0);
   podcastPreviewState.fadeOut = Math.max(0, Number(segment.fadeOut) || 0);
   podcastPreviewState.automation = Array.isArray(segment.automation) ? segment.automation : [];
-  podcastPreviewAudio.src = result.dataUrl;
+  podcastPreviewAudio.src = result.url;
   const startPlayback = async () => {
     if (podcastPreviewState.index !== index) return;
     podcastPreviewAudio.currentTime = Math.min(start, Math.max(0, podcastPreviewAudio.duration - 0.01));
@@ -2397,7 +2467,7 @@ async function bootstrap() {
   buildSegmentedMeter(els.micTestMeter, MIC_TEST_SEGMENT_COUNT);
   buildSegmentedMeter(els.recordingMeter, 20);
   buildSpectrumMeter();
-  startAudioVisualLoop();
+  setAudioVisualActive(false);
   buildDayPicker();
   await loadDevices();
   await loadLibrary();

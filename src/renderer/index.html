@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; media-src 'self' data: blob: streamradio:; style-src 'self' 'unsafe-inline';" />
   <title>Stream Radio</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -303,7 +303,7 @@
     </div>
 
     <!-- ==================== BARRA DE ESTADO ==================== -->
-    <footer class="status-bar" id="status-bar"><div class="status-bar-group"><span class="status-bar-item status-bar-live"><span class="statusbar-dot" id="statusbar-dot"></span><span id="statusbar-text">Desconectado</span></span></div><div class="status-bar-group"><span class="status-bar-item status-bar-item-gain" id="statusbar-gain">Ganancia 100%</span><span class="status-bar-item status-bar-mono" id="statusbar-timer">00:00:00</span><span class="status-bar-item status-bar-item-version" id="statusbar-version">v1.0.0</span><button type="button" class="btn-icon-only" id="btn-toggle-compact" title="Modo mini-ventana"><span data-icon="compact"></span></button></div></footer>
+    <footer class="status-bar" id="status-bar"><div class="status-bar-group"><span class="status-bar-item status-bar-live"><span class="statusbar-dot" id="statusbar-dot"></span><span id="statusbar-text">Desconectado</span></span><span class="status-bar-item recording-save-status" id="recording-save-status" hidden aria-live="polite"></span></div><div class="status-bar-group"><span class="status-bar-item status-bar-item-gain" id="statusbar-gain">Ganancia 100%</span><span class="status-bar-item status-bar-mono" id="statusbar-timer">00:00:00</span><span class="status-bar-item status-bar-item-version" id="statusbar-version">v1.0.0</span><button type="button" class="btn-icon-only" id="btn-toggle-compact" title="Modo mini-ventana"><span data-icon="compact"></span></button></div></footer>
   </div>
 
   <!-- ==================== BARRA COMPACTA ==================== -->

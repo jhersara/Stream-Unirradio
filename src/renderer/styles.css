@@ -2405,3 +2405,33 @@ input[type="range"] { accent-color: var(--violet); }
     transition: none;
   }
 }
+
+
+/* Estado de guardado de la grabación: evita que el cierre parezca un bloqueo. */
+.recording-save-status {
+  max-width: min(420px, 42vw);
+  overflow: hidden;
+  color: #9dc8e7;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-save-status[data-state="processing"],
+.recording-save-status[data-state="saving"] {
+  color: var(--magenta);
+}
+
+.recording-save-status[data-state="saved"] {
+  color: var(--success);
+}
+
+.recording-save-status[data-state="error"] {
+  color: #ff9aa7;
+}
+
+@media (max-width: 620px) {
+  .recording-save-status {
+    max-width: 58vw;
+  }
+}

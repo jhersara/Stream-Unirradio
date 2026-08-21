@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('streamAPI', {
   listLibrary: () => ipcRenderer.invoke('library:list'),
   importTracks: () => ipcRenderer.invoke('library:import'),
   deleteTrack: (id) => ipcRenderer.invoke('library:delete', id),
-  getTrackAudio: (id) => ipcRenderer.invoke('library:get-audio', id),
+  getTrackAudioUrl: (id) => ipcRenderer.invoke('library:get-audio-url', id),
 
   // Podcast Studio
   listEpisodes: () => ipcRenderer.invoke('podcast:list'),
@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('streamAPI', {
   stopPodcastRecording: () => ipcRenderer.invoke('podcast:record-stop'),
   podcastRecordingStatus: () => ipcRenderer.invoke('podcast:record-status'),
   getPodcastWaveform: (segment) => ipcRenderer.invoke('podcast:waveform', segment),
-  getPodcastSegmentAudio: (segment) => ipcRenderer.invoke('podcast:segment-audio', segment),
+  getPodcastSegmentAudioUrl: (segment) => ipcRenderer.invoke('podcast:segment-audio-url', segment),
   measurePodcastEpisode: (episode) => ipcRenderer.invoke('podcast:metrics', episode),
 
   // Configuracion persistida (servidor, credenciales, pistas activas)
@@ -72,7 +72,8 @@ contextBridge.exposeInMainWorld('streamAPI', {
   onUpdateState: (callback) => subscribe('app:update-state', callback),
   onPodcastExportProgress: (callback) => subscribe('podcast:export-progress', callback),
   onPodcastRecordingState: (callback) => subscribe('podcast:recording-state', callback),
-  onPodcastRecordingLevel: (callback) => subscribe('podcast:recording-level', callback)
+  onPodcastRecordingLevel: (callback) => subscribe('podcast:recording-level', callback),
+  onRecordingSaveState: (callback) => subscribe('recording:save-state', callback)
 });
 
 function subscribe(channel, callback) {

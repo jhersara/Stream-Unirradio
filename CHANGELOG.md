@@ -1,5 +1,27 @@
 # Historial de cambios
 
+## [Unreleased] — Estabilidad y rendimiento
+
+### Preescucha y consumo de memoria
+
+- Sustituida la conversión completa de pistas de la Biblioteca a base64 por un protocolo local seguro con carga progresiva de Chromium.
+- Aplicada la misma estrategia a la preescucha de segmentos de Podcast Studio.
+- Eliminada la posibilidad de que una pista grande provoque un pico innecesario de memoria al reproducirse.
+
+### Rendimiento de la interfaz
+
+- El vúmetro y el ecualizador se pintan únicamente durante una emisión activa.
+- El renderizado visual se limita a 20 FPS y se pausa cuando la ventana está oculta o minimizada.
+- Reducida la frecuencia de telemetría de audio a 10 actualizaciones por segundo, conservando la interpolación visual.
+
+### Cierre de grabaciones
+
+- El archivo se finaliza primero en una ubicación temporal y el selector de nombre/carpeta se ejecuta después de terminar el vivo.
+- El movimiento de archivos usa operaciones asíncronas para no congelar Electron durante copias grandes o entre unidades.
+- Añadido estado visible de `Procesando`, `Selecciona nombre y carpeta`, `Guardando` y `Grabación guardada`.
+
+---
+
 ## [1.3.0] — Guardado personalizado de grabaciones
 
 ### Grabación local

@@ -67,6 +67,10 @@ function sendPodcastRecordingLevel(mainWindow, payload) {
   send(mainWindow, 'podcast:recording-level', payload);
 }
 
+function sendRecordingSaveState(mainWindow, payload) {
+  send(mainWindow, 'recording:save-state', payload);
+}
+
 module.exports = {
   sendLog,
   sendStatus,
@@ -79,5 +83,6 @@ module.exports = {
   sendUpdateState,
   sendPodcastExportProgress,
   sendPodcastRecordingState,
-  sendPodcastRecordingLevel
+  sendPodcastRecordingLevel,
+  sendRecordingSaveState
 };

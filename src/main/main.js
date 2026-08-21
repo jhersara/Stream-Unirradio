@@ -1,5 +1,15 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, protocol } = require('electron');
+const fs = require('fs');
 const path = require('path');
+const libraryManager = require('./library-manager');
+const mediaPreviewStore = require('./media-preview-store');
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'streamradio',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+]);
 const { registerIpcHandlers } = require('./ipc-handlers');
 const { initAutoUpdater } = require('./auto-updater');
 const ffmpegStream = require('./ffmpeg-stream');
@@ -29,6 +39,33 @@ if (!gotSingleInstanceLock) {
   });
 
   bootstrapApp();
+}
+
+function registerLibraryMediaProtocol() {
+  protocol.registerFileProtocol('streamradio', (request, callback) => {
+    try {
+      const requestUrl = new URL(request.url);
+      if (requestUrl.hostname !== 'track' && requestUrl.hostname !== 'podcast') {
+        callback({ error: -6 });
+        return;
+      }
+
+      const resourceId = decodeURIComponent(requestUrl.pathname.replace(/^\/+/, ''));
+      const filePath = requestUrl.hostname === 'track'
+        ? libraryManager.getTrackPath(resourceId)
+        : requestUrl.hostname === 'podcast'
+          ? mediaPreviewStore.resolve(resourceId)
+          : null;
+      if (!filePath || !fs.existsSync(filePath)) {
+        callback({ error: -6 });
+        return;
+      }
+
+      callback({ path: filePath });
+    } catch {
+      callback({ error: -2 });
+    }
+  });
 }
 
 function createWindow() {
@@ -87,6 +124,7 @@ function createWindow() {
 
 function bootstrapApp() {
   app.whenReady().then(() => {
+    registerLibraryMediaProtocol();
     createWindow();
     initAutoUpdater(mainWindow);
     startScheduler(mainWindow);

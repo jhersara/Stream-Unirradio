@@ -15,6 +15,7 @@ const autoUpdaterModule = require('./auto-updater');
 const historyStore = require('./history-store');
 const scheduleStore = require('./schedule-store');
 const { sendLog } = require('./ipc-events');
+const mediaPreviewStore = require('./media-preview-store');
 
 /**
  * Registra los canales IPC expuestos al renderer a traves de preload.js.
@@ -105,13 +106,13 @@ function registerIpcHandlers(mainWindow) {
     return libraryManager.deleteTrack(id);
   });
 
-  ipcMain.handle('library:get-audio', async (event, id) => {
-    try {
-      return { dataUrl: libraryManager.getTrackAudioDataUrl(id) };
-    } catch (err) {
-      sendLog(mainWindow, `ERROR cargando audio de la pista: ${err.message}`);
-      return { dataUrl: null };
-    }
+  ipcMain.handle('library:get-audio-url', async (event, id) => {
+    const trackPath = libraryManager.getTrackPath(id);
+    return {
+      url: trackPath && fs.existsSync(trackPath)
+        ? `streamradio://track/${encodeURIComponent(String(id))}`
+        : null
+    };
   });
 
   // ---------------------------------------------------------------------
@@ -174,24 +175,25 @@ function registerIpcHandlers(mainWindow) {
 
   ipcMain.handle('podcast:record-status', async () => ({ recording: podcastRecorder.isRecording() }));
 
+  function getPodcastSegmentPath(segment) {
+    if (segment?.type !== 'recording') return libraryManager.getTrackPath(segment?.sourceId);
+    const recordingRoot = path.resolve(path.join(app.getPath('userData'), 'podcast-studio', 'recordings'));
+    const filePath = path.resolve(String(segment.sourceId || ''));
+    return filePath === recordingRoot || filePath.startsWith(`${recordingRoot}${path.sep}`) ? filePath : null;
+  }
+
   ipcMain.handle('podcast:waveform', async (event, segment) => {
-    const filePath = segment?.type === 'recording'
-      ? segment.sourceId
-      : libraryManager.getTrackPath(segment?.sourceId);
+    const filePath = getPodcastSegmentPath(segment);
     if (!filePath || !fs.existsSync(filePath)) return { ok: false, dataUrl: null };
     const dataUrl = await getWaveformData(filePath);
     return { ok: Boolean(dataUrl), dataUrl };
   });
 
-  ipcMain.handle('podcast:segment-audio', async (event, segment) => {
-    const filePath = segment?.type === 'recording'
-      ? segment.sourceId
-      : libraryManager.getTrackPath(segment?.sourceId);
-    if (!filePath || !fs.existsSync(filePath)) return { ok: false, dataUrl: null };
-    const extension = path.extname(filePath).toLowerCase();
-    const mime = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg' }[extension] || 'audio/mpeg';
-    const dataUrl = `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
-    return { ok: true, dataUrl };
+  ipcMain.handle('podcast:segment-audio-url', async (event, segment) => {
+    const filePath = getPodcastSegmentPath(segment);
+    if (!filePath || !fs.existsSync(filePath)) return { ok: false, url: null };
+    const token = mediaPreviewStore.register(filePath);
+    return { ok: true, url: `streamradio://podcast/${encodeURIComponent(token)}` };
   });
 
   ipcMain.handle('podcast:metrics', async (event, episode) => {

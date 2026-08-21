@@ -8,7 +8,8 @@ const { sendLog, sendPodcastRecordingState, sendPodcastRecordingLevel } = requir
 
 const SAMPLE_RATE = 44100;
 const CHANNELS = 2;
-const VU_EMIT_INTERVAL_MS = 66;
+// Diez actualizaciones por segundo mantienen el medidor fluido con menor carga.
+const VU_EMIT_INTERVAL_MS = 100;
 
 let recording = null;
 

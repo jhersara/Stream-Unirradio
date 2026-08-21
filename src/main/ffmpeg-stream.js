@@ -16,7 +16,8 @@ const {
   sendSpectrum,
   sendDeadAir,
   sendIntroProgress,
-  sendOutroProgress
+  sendOutroProgress,
+  sendRecordingSaveState
 } = require('./ipc-events');
 
 const SAMPLE_RATE = 44100;
@@ -25,7 +26,9 @@ const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
 const OUTRO_CUTOFF_SECONDS = 2;
 const CHUNK_MS = 50;
-const VU_EMIT_INTERVAL_MS = 66;
+// Diez actualizaciones por segundo son suficientes para interpolar el vúmetro
+// en el renderer y reducen el trabajo de IPC/FFT en equipos modestos.
+const VU_EMIT_INTERVAL_MS = 100;
 const SPECTRUM_FFT_SIZE = 512;
 const SPECTRUM_BAND_COUNT = 24;
 const RECONNECT_DELAYS_MS = [3000, 6000, 12000, 24000, 30000];
@@ -207,37 +210,61 @@ async function chooseRecordingDestination(mainWindow, defaultPath) {
   }
 }
 
-function moveRecordingFile(sourcePath, destinationPath) {
+async function moveRecordingFile(sourcePath, destinationPath) {
   if (!sourcePath || !fs.existsSync(sourcePath)) return null;
   const destination = ensureMp3Extension(destinationPath);
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+
+  // El selector ya confirmó la sobreescritura si el usuario eligió un archivo
+  // existente. Eliminarlo antes del rename hace que Windows se comporte igual
+  // que los demás sistemas sin bloquear el proceso principal.
+  if (path.resolve(sourcePath) !== path.resolve(destination)) {
+    await fs.promises.rm(destination, { force: true });
+  }
 
   try {
-    fs.renameSync(sourcePath, destination);
+    await fs.promises.rename(sourcePath, destination);
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
-    fs.copyFileSync(sourcePath, destination);
-    fs.unlinkSync(sourcePath);
+    // copyFile/unlink usan el pool de libuv: una copia grande entre discos no
+    // congela el hilo principal ni la interfaz de Electron.
+    await fs.promises.copyFile(sourcePath, destination);
+    await fs.promises.unlink(sourcePath);
   }
   return destination;
 }
 
 async function finalizeRecording(mainWindow, finishedSession) {
   if (!finishedSession?.recordingRequested || !finishedSession.recordingTempPath) return null;
-  if (!fs.existsSync(finishedSession.recordingTempPath)) return null;
+  if (!fs.existsSync(finishedSession.recordingTempPath)) {
+    sendRecordingSaveState(mainWindow, { state: 'error', message: 'No se encontró el archivo temporal de la grabación.' });
+    return null;
+  }
 
   const defaultPath = buildDefaultRecordingPath(finishedSession.recordingStamp);
+  sendRecordingSaveState(mainWindow, {
+    state: 'ready',
+    defaultPath,
+    message: finishedSession.recordingSavePrompt === false
+      ? 'Preparando guardado automático…'
+      : 'Selecciona el nombre y la carpeta de la grabación.'
+  });
+
   const destination = finishedSession.recordingSavePrompt === false
     ? defaultPath
     : await chooseRecordingDestination(mainWindow, defaultPath);
 
+  sendRecordingSaveState(mainWindow, { state: 'saving', destination, message: 'Guardando grabación…' });
+
   try {
     const finalPath = moveRecordingFile(finishedSession.recordingTempPath, destination);
     if (finalPath) {
+      sendRecordingSaveState(mainWindow, { state: 'saved', path: finalPath, message: 'Grabación guardada correctamente.' });
       sendLog(mainWindow, `Grabación guardada en: ${finalPath}`);
       return finalPath;
     }
   } catch (err) {
+    sendRecordingSaveState(mainWindow, { state: 'error', message: `No se pudo guardar la grabación: ${err.message}` });
     sendLog(mainWindow, `Aviso: no se pudo mover la grabación a ${destination} (${err.message}).`);
   }
 
@@ -1247,12 +1274,27 @@ async function teardownSession(mainWindow, finalStatusKind) {
     gracefullyEndProcess(finishedSession ? finishedSession.recorderProcess : null, 2500)
   ]);
 
-  finishedSession.recordingPath = await finalizeRecording(mainWindow, finishedSession);
-  logHistoryEntry(finishedSession, 'manual');
-
+  // Liberar la interfaz en cuanto el vivo terminó. El selector/movimiento del
+  // MP3 continúa en segundo plano y comunica su estado sin bloquear el IPC.
   sendDeadAir(mainWindow, false);
   sendStatus(mainWindow, finalStatusKind, 0);
-  sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
+  sendLog(mainWindow, 'Transmisión finalizada. Desconectado del servidor.');
+
+  if (finishedSession?.recordingRequested && finishedSession.recordingTempPath) {
+    sendRecordingSaveState(mainWindow, { state: 'processing', message: 'La transmisión terminó; preparando la grabación…' });
+    void finalizeRecording(mainWindow, finishedSession)
+      .then((finalPath) => {
+        finishedSession.recordingPath = finalPath;
+        logHistoryEntry(finishedSession, 'manual');
+      })
+      .catch((err) => {
+        sendRecordingSaveState(mainWindow, { state: 'error', message: `No se pudo finalizar la grabación: ${err.message}` });
+        finishedSession.recordingPath = finishedSession.recordingTempPath;
+        logHistoryEntry(finishedSession, 'manual');
+      });
+  } else {
+    logHistoryEntry(finishedSession, 'manual');
+  }
 }
 
 // ---------------------------------------------------------------------------
