@@ -10,3 +10,10 @@ Thumbs.db
 # solo necesitan existir en el disco de cada maquina de desarrollo -- el
 # instalador final SI los incluye (eso va a GitHub Releases, no al repo).
 resources/ffmpeg/*.exe
+
+# Artefactos locales de validacion visual
+artifacts/
+capture-preload.js
+capture-screenshots.js
+capture-responsive.js
+capture-menu.js

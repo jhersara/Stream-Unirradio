@@ -6,6 +6,8 @@ const { resolveFfmpegPath } = require('./media-probe');
 const libraryManager = require('./library-manager');
 const audioCapture = require('./audio-capture');
 const historyStore = require('./history-store');
+const radioProviders = require('./radio-providers');
+const { ShoutcastSourceBridge } = require('./shoutcast-source');
 const {
   sendLog,
   sendStatus,
@@ -33,6 +35,7 @@ const DEAD_AIR_SECONDS = 15;
 // Solo se soporta UNA sesion de transmision activa a la vez (coincide con el
 // diseno de un unico boton Iniciar/Detener en la interfaz).
 let session = null;
+let pendingStart = null;
 
 // Prueba de microfono (fuera de una transmision real, ver startPreview).
 let previewState = null;
@@ -73,6 +76,20 @@ function writeToEncoder(chunk) {
   }
 }
 
+function writeEncodedOutput(chunk) {
+  if (!session || !session.sourceBridge) return;
+  const bridge = session.sourceBridge;
+  if (bridge.write(chunk)) return;
+  if (session.encoderProcess?.stdout && !session.encoderProcess.stdout.isPaused()) {
+    session.encoderProcess.stdout.pause();
+    bridge.once('drain', () => {
+      if (session && session.sourceBridge === bridge && session.encoderProcess?.stdout) {
+        session.encoderProcess.stdout.resume();
+      }
+    });
+  }
+}
+
 function writeToRecorder(chunk) {
   if (!session || !session.recorderProcess) return;
   const stdin = session.recorderProcess.stdin;
@@ -92,32 +109,28 @@ function writeToOutputs(chunk) {
 }
 
 // ---------------------------------------------------------------------------
-// Construccion de comando ffmpeg / URL Icecast
-// (misma logica ya validada en el prototipo Python: icecast:// + legacy_icecast)
+// Construccion del comando FFmpeg delegada al adaptador seleccionado.
 // ---------------------------------------------------------------------------
-function buildIcecastUrl(config) {
-  const user = encodeURIComponent(config.user);
-  const pass = encodeURIComponent(config.password);
-  const mount = encodeURIComponent(config.mount.replace(/^\/+/, ''));
-  return `icecast://${user}:${pass}@${config.server}:${config.port}/${mount}`;
+function buildStreamProfile(config) {
+  const validation = radioProviders.validateConfig(config);
+  if (!validation.ok) {
+    throw new Error(validation.errors.join(' '));
+  }
+  return radioProviders.buildEncoderProfile(config);
 }
 
-function buildEncoderArgs(icecastUrl) {
-  return [
-    '-y', '-hide_banner', '-loglevel', 'warning',
-    '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS),
-    '-i', 'pipe:0',
-    '-c:a', 'libmp3lame', '-b:a', '128k', '-ar', String(SAMPLE_RATE),
-    '-f', 'mp3',
-    '-content_type', 'audio/mpeg',
-    '-legacy_icecast', '1',
-    '-ice_name', 'UNIR Radio - Stream en vivo',
-    '-ice_description', 'Transmision en vivo via Stream UNIR Radio',
-    '-ice_genre', 'Various',
-    '-ice_url', 'https://unirradio.com',
-    '-fflags', 'nobuffer',
-    icecastUrl
-  ];
+async function connectSourceBridge(mainWindow, profile, config) {
+  if (!profile || profile.outputMode !== 'shoutcast-source') return null;
+  const bridge = new ShoutcastSourceBridge({ ...config, streamId: profile.streamId });
+  if (pendingStart) pendingStart.sourceBridge = bridge;
+  try {
+    await bridge.connect();
+    sendLog(mainWindow, `Handshake SHOUTcast completado en ${profile.sourceHost}:${profile.sourcePort}.`);
+    return bridge;
+  } catch (err) {
+    bridge.close();
+    throw err;
+  }
 }
 
 function buildRecorderArgs(outputPath) {
@@ -146,7 +159,7 @@ function buildRecordingPath() {
 function interpretFfmpegLine(line) {
   const lower = line.toLowerCase();
   if (lower.includes('400 bad request')) {
-    return 'El servidor rechazo la conexion (400). Verifica que se este usando icecast:// con -legacy_icecast activo.';
+    return 'El servidor rechazo la conexion (400). Verifica el protocolo, el puerto y las credenciales del proveedor seleccionado.';
   }
   if (lower.includes(' 401') || lower.includes('unauthorized')) {
     return 'Credenciales incorrectas (401). Revisa usuario y contrasena en Configuracion.';
@@ -155,10 +168,10 @@ function interpretFfmpegLine(line) {
     return 'Acceso denegado (403). El punto de montaje podria estar en uso o no autorizado.';
   }
   if (lower.includes(' 404') || lower.includes('not found')) {
-    return 'Punto de montaje no encontrado (404). Verifica que coincida EXACTAMENTE con el panel de Zeno.fm.';
+    return 'Punto de montaje o Stream ID no encontrado (404). Verifica los datos copiados desde Live Source Connections.';
   }
   if (lower.includes('-10053') || lower.includes('-10054') || lower.includes('connection abort') || lower.includes('connection reset')) {
-    return 'El servidor acepto la conexion y la cerro poco despues. Causa mas comun: el Punto de Montaje o la Contrasena no coinciden EXACTAMENTE con los de tu panel de Zeno.fm.';
+    return 'El servidor acepto la conexion y la cerro poco despues. Revisa el protocolo, el punto de montaje o Stream ID y la contraseña.';
   }
   return null;
 }
@@ -276,15 +289,81 @@ function applyGain(buffer, gain) {
   return out;
 }
 
-function computePeakDb(buffer) {
-  let peak = 0;
-  for (let i = 0; i + 1 < buffer.length; i += 2) {
-    const abs = Math.abs(buffer.readInt16LE(i));
-    if (abs > peak) peak = abs;
+function normalizedToDb(value) {
+  return value > 0 ? 20 * Math.log10(Math.min(1, value)) : -100;
+}
+
+function computeAudioMetrics(buffer) {
+  let peakLeft = 0;
+  let peakRight = 0;
+  let sumSquaresLeft = 0;
+  let sumSquaresRight = 0;
+  let frames = 0;
+
+  // PCM estéreo 16-bit: L, R, L, R. Todo se calcula sobre el bloque ya
+  // aplicado a ganancia, sin enviar el buffer hacia el renderer.
+  for (let i = 0; i + 3 < buffer.length; i += 4) {
+    const left = buffer.readInt16LE(i);
+    const right = buffer.readInt16LE(i + 2);
+    const absLeft = Math.abs(left);
+    const absRight = Math.abs(right);
+    if (absLeft > peakLeft) peakLeft = absLeft;
+    if (absRight > peakRight) peakRight = absRight;
+    sumSquaresLeft += left * left;
+    sumSquaresRight += right * right;
+    frames += 1;
   }
-  const normalized = peak / 32768;
-  const db = normalized > 0 ? 20 * Math.log10(normalized) : -100;
-  return { peak: normalized, db };
+
+  const leftPeak = peakLeft / 32768;
+  const rightPeak = peakRight / 32768;
+  const peak = Math.max(leftPeak, rightPeak);
+  const rms = frames > 0
+    ? Math.sqrt((sumSquaresLeft + sumSquaresRight) / (frames * 2)) / 32768
+    : 0;
+  const peakDb = normalizedToDb(peak);
+
+  return {
+    peak,
+    db: peakDb,
+    peakDb,
+    rms,
+    rmsDb: normalizedToDb(rms),
+    leftDb: normalizedToDb(leftPeak),
+    rightDb: normalizedToDb(rightPeak),
+    clip: peak >= 0.98
+  };
+}
+
+function computePeakDb(buffer) {
+  const metrics = computeAudioMetrics(buffer);
+  return { peak: metrics.peak, db: metrics.db };
+}
+
+// ---------------------------------------------------------------------------
+// Deteccion de "aire muerto": si el nivel de pico se queda por debajo del
+// umbral de silencio de forma CONTINUA por mas de DEAD_AIR_SECONDS, se
+// avisa una vez (no en cada chequeo, para no saturar el log/UI). Se limpia
+// solo -- vuelve a avisar (con un aviso de "recuperado") en cuanto vuelve a
+// haber señal.
+// ---------------------------------------------------------------------------
+function checkDeadAir(mainWindow, peak, now) {
+  if (!session) return;
+  if (peak < SILENCE_PEAK_THRESHOLD) {
+    if (!session.silenceSince) session.silenceSince = now;
+    const silentForSeconds = (now - session.silenceSince) / 1000;
+    if (silentForSeconds >= DEAD_AIR_SECONDS && !session.deadAirActive) {
+      session.deadAirActive = true;
+      sendLog(mainWindow, `ALERTA: no se detecta audio desde hace ${Math.round(silentForSeconds)}s. Revisa el microfono.`);
+      sendDeadAir(mainWindow, true);
+    }
+  } else {
+    if (session.deadAirActive) {
+      sendLog(mainWindow, 'Audio detectado de nuevo; todo normal.');
+      sendDeadAir(mainWindow, false);
+    }
+    session.silenceSince = null;
+    session.deadAirActive = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +494,33 @@ function gracefullyEndProcess(proc, timeoutMs) {
 // ---------------------------------------------------------------------------
 // Ciclo de vida del proceso ffmpeg (encoder de salida hacia Icecast)
 // ---------------------------------------------------------------------------
-function wireEncoderProcessEvents(mainWindow, encoderProcess) {
+function wireSourceBridgeEvents(mainWindow, bridge) {
+  if (!bridge) return;
+  bridge.on('error', (err) => {
+    if (!session || session.sourceBridge !== bridge || session.stopRequested) return;
+    sendLog(mainWindow, `ERROR de fuente SHOUTcast: ${err.message}`);
+    session.sourceBridge = null;
+    const encoder = session.encoderProcess;
+    if (encoder) {
+      try { encoder.kill(); } catch { /* noop */ }
+      handleEncoderDrop(mainWindow, encoder);
+    } else {
+      handleUnexpectedTermination(mainWindow);
+    }
+  });
+  bridge.on('close', () => {
+    if (!session || session.sourceBridge !== bridge || session.stopRequested) return;
+    sendLog(mainWindow, 'La fuente SHOUTcast cerró la conexión.');
+    session.sourceBridge = null;
+    const encoder = session.encoderProcess;
+    if (encoder) {
+      try { encoder.kill(); } catch { /* noop */ }
+      handleEncoderDrop(mainWindow, encoder);
+    }
+  });
+}
+
+function wireEncoderProcessEvents(mainWindow, encoderProcess, sourceBridge = null) {
   encoderProcess.stderr.on('data', (chunk) => {
     chunk.toString().split('\n').forEach((rawLine) => {
       const line = rawLine.trim();
@@ -425,6 +530,11 @@ function wireEncoderProcessEvents(mainWindow, encoderProcess) {
       if (hint) sendLog(mainWindow, `Sugerencia: ${hint}`);
     });
   });
+
+  if (sourceBridge && encoderProcess.stdout) {
+    encoderProcess.stdout.on('data', (chunk) => writeEncodedOutput(chunk));
+    wireSourceBridgeEvents(mainWindow, sourceBridge);
+  }
 
   encoderProcess.on('error', (err) => {
     sendLog(mainWindow, `ERROR de FFmpeg: ${err.message}`);
@@ -448,7 +558,7 @@ function wireEncoderProcessEvents(mainWindow, encoderProcess) {
  */
 function handleEncoderDrop(mainWindow, encoderProcess) {
   if (!session || session.encoderProcess !== encoderProcess || session.stopRequested) return;
-  if (session.phase === 'live' || session.phase === 'intro') {
+  if (session.phase === 'live' || session.phase === 'paused' || session.phase === 'intro') {
     attemptReconnect(mainWindow);
   } else if (session.phase === 'connecting') {
     // startStream ya revisa el estado del proceso despues de su propia
@@ -469,6 +579,7 @@ function handleEncoderDrop(mainWindow, encoderProcess) {
 async function attemptReconnect(mainWindow) {
   if (!session || session.stopRequested) return;
 
+  const shouldRemainPaused = session.phase === 'paused';
   session.phase = 'reconnecting';
   session.reconnectAttempt = (session.reconnectAttempt || 0) + 1;
   const attempt = session.reconnectAttempt;
@@ -487,30 +598,49 @@ async function attemptReconnect(mainWindow) {
   if (!session || session.stopRequested) return;
 
   const config = session.config;
-  let icecastUrl;
+  if (session.sourceBridge) {
+    session.sourceBridge.close();
+    session.sourceBridge = null;
+  }
+  let profile;
   try {
-    icecastUrl = buildIcecastUrl(config);
+    profile = buildStreamProfile(config);
   } catch (err) {
     sendLog(mainWindow, `ERROR de configuracion al reconectar: ${err.message}`);
     handleUnexpectedTermination(mainWindow);
     return;
   }
 
+  let sourceBridge;
+  try {
+    sourceBridge = await connectSourceBridge(mainWindow, profile, config);
+  } catch (err) {
+    sendLog(mainWindow, `ERROR reconectando fuente ${profile.provider.label}: ${err.message}`);
+    attemptReconnect(mainWindow);
+    return;
+  }
+  if (!session || session.stopRequested) {
+    sourceBridge?.close();
+    return;
+  }
+
   const ffmpegPath = resolveFfmpegPath();
-  const args = buildEncoderArgs(icecastUrl);
-  sendLog(mainWindow, `Reintentando conexion con ${config.server}:${config.port}/${config.mount} (intento ${attempt}/${RECONNECT_DELAYS_MS.length})...`);
+  const args = profile.args;
+  sendLog(mainWindow, `Reintentando conexion con ${profile.provider.label} en ${config.server}:${config.port} (intento ${attempt}/${RECONNECT_DELAYS_MS.length})...`);
 
   let encoderProcess;
   try {
     encoderProcess = spawn(ffmpegPath, args, { windowsHide: true });
   } catch (err) {
+    sourceBridge?.close();
     sendLog(mainWindow, `ERROR reintentando: ${err.message}`);
     attemptReconnect(mainWindow);
     return;
   }
 
   session.encoderProcess = encoderProcess;
-  wireEncoderProcessEvents(mainWindow, encoderProcess);
+  session.sourceBridge = sourceBridge;
+  wireEncoderProcessEvents(mainWindow, encoderProcess, sourceBridge);
 
   await wait(700);
   if (!session || session.stopRequested) return;
@@ -522,10 +652,12 @@ async function attemptReconnect(mainWindow) {
     return;
   }
 
-  sendLog(mainWindow, 'Reconectado correctamente. Continuando en vivo.');
+  sendLog(mainWindow, shouldRemainPaused
+    ? 'Reconectado correctamente. La transmisión permanece pausada.'
+    : 'Reconectado correctamente. Continuando en vivo.');
   session.reconnectAttempt = 0;
-  session.phase = 'live';
-  sendStatus(mainWindow, 'live', elapsedSeconds());
+  session.phase = shouldRemainPaused ? 'paused' : 'live';
+  sendStatus(mainWindow, session.phase, elapsedSeconds());
 }
 
 function wireRecorderProcessEvents(mainWindow, recorderProcess) {
@@ -553,12 +685,17 @@ function handleUnexpectedTermination(mainWindow) {
   if (session.recorderProcess) {
     try { session.recorderProcess.kill(); } catch { /* noop */ }
   }
+  if (session.sourceBridge) {
+    session.sourceBridge.close();
+    session.sourceBridge = null;
+  }
   stopStatusTicker();
   const finishedSession = session;
   session = null;
   logHistoryEntry(finishedSession, 'error');
   sendIntroProgress(mainWindow, { done: true });
   sendOutroProgress(mainWindow, { done: true });
+  sendDeadAir(mainWindow, false);
   sendStatus(mainWindow, 'error', 0);
 }
 
@@ -638,8 +775,8 @@ function isPreviewing() {
 // Secuencia: conectar -> (intro) -> vivo
 // ---------------------------------------------------------------------------
 async function startStream(mainWindow, rawConfig) {
-  if (session) {
-    sendLog(mainWindow, 'Ya hay una transmision en curso.');
+  if (session || pendingStart) {
+    sendLog(mainWindow, 'Ya hay una transmision en curso o conectándose.');
     return { ok: false, reason: 'already-streaming' };
   }
 
@@ -652,24 +789,50 @@ async function startStream(mainWindow, rawConfig) {
     return { ok: false, reason: 'naudiodon-unavailable' };
   }
 
-  const config = { ...rawConfig, gain: rawConfig.gain || 1 };
-  let icecastUrl;
+  const config = { ...rawConfig, provider: rawConfig.provider || 'zeno-icecast', gain: rawConfig.gain || 1 };
+  pendingStart = { stopRequested: false, sourceBridge: null };
+  let profile;
   try {
-    icecastUrl = buildIcecastUrl(config);
+    profile = buildStreamProfile(config);
   } catch (err) {
+    pendingStart = null;
     sendLog(mainWindow, `ERROR de configuracion: ${err.message}`);
     return { ok: false, reason: 'invalid-config' };
   }
 
-  const ffmpegPath = resolveFfmpegPath();
-  const args = buildEncoderArgs(icecastUrl);
+  let sourceBridge;
+  try {
+    sourceBridge = await connectSourceBridge(mainWindow, profile, config);
+  } catch (err) {
+    if (!pendingStart || pendingStart.stopRequested) {
+      pendingStart = null;
+      return { ok: false, reason: 'stopped-during-connection' };
+    }
+    pendingStart = null;
+    sendLog(mainWindow, `ERROR conectando ${profile.provider.label}: ${err.message}`);
+    return { ok: false, reason: 'source-connection-failed' };
+  }
+  if (pendingStart?.stopRequested) {
+    sourceBridge?.close();
+    pendingStart = null;
+    return { ok: false, reason: 'stopped-during-connection' };
+  }
+  if (session && session.stopRequested) {
+    sourceBridge?.close();
+    return { ok: false, reason: 'stopped-during-connection' };
+  }
 
-  sendLog(mainWindow, `Estableciendo conexion Icecast con ${config.server}:${config.port}/${config.mount}...`);
+  const ffmpegPath = resolveFfmpegPath();
+  const args = profile.args;
+
+  sendLog(mainWindow, `Estableciendo conexion ${profile.provider.label} con ${config.server}:${config.port}${config.mount ? `/${config.mount}` : ''}...`);
 
   let encoderProcess;
   try {
     encoderProcess = spawn(ffmpegPath, args, { windowsHide: true });
   } catch (err) {
+    sourceBridge?.close();
+    pendingStart = null;
     sendLog(mainWindow, `ERROR: no se pudo iniciar ffmpeg (${err.message}).`);
     return { ok: false, reason: 'spawn-failed' };
   }
@@ -678,6 +841,7 @@ async function startStream(mainWindow, rawConfig) {
     mainWindow,
     config,
     encoderProcess,
+    sourceBridge,
     recorderProcess: null,
     recordingPath: null,
     inputStream: null,
@@ -691,6 +855,7 @@ async function startStream(mainWindow, rawConfig) {
     introPcmPromise: null,
     outroPcmPromise: null
   };
+  pendingStart = null;
 
   // Grabacion local opcional (el usuario decide Si/No al darle Iniciar,
   // ver renderer.js). Se abre un proceso ffmpeg aparte que recibe el MISMO
@@ -732,7 +897,7 @@ async function startStream(mainWindow, rawConfig) {
     }
   }
 
-  wireEncoderProcessEvents(mainWindow, encoderProcess);
+  wireEncoderProcessEvents(mainWindow, encoderProcess, sourceBridge);
 
   await wait(700);
 
@@ -795,6 +960,8 @@ async function runIntroThenLive(mainWindow) {
 function beginLiveCapture(mainWindow) {
   if (!session) return;
   session.phase = 'live';
+  session.silenceSince = null;
+  session.deadAirActive = false;
   sendStatus(mainWindow, 'live', elapsedSeconds());
   sendLog(mainWindow, 'Transmision en vivo activa.');
 
@@ -818,16 +985,23 @@ function beginLiveCapture(mainWindow) {
   let lastVuEmit = 0;
 
   inputStream.on('data', (chunk) => {
-    if (!session || session.phase !== 'live') return;
+    if (!session || (session.phase !== 'live' && session.phase !== 'reconnecting' && session.phase !== 'paused')) return;
+    if (session.phase === 'paused') {
+      // Mantener vivo el encoder y la fuente remota sin transmitir el micrófono.
+      // Se conserva la duración de la emisión enviando silencio PCM del mismo tamaño.
+      writeToOutputs(Buffer.alloc(chunk.length));
+      return;
+    }
     const gained = applyGain(chunk, session.gain);
     writeToOutputs(gained);
 
     const now = Date.now();
     if (now - lastVuEmit >= VU_EMIT_INTERVAL_MS) {
       lastVuEmit = now;
-      const { peak, db } = computePeakDb(gained);
-      sendVuLevel(mainWindow, peak, db);
+      const metrics = computeAudioMetrics(gained);
+      sendVuLevel(mainWindow, metrics.peak, metrics.db, metrics);
       sendSpectrum(mainWindow, computeSpectrum(gained, SPECTRUM_BAND_COUNT));
+      checkDeadAir(mainWindow, metrics.peak, now);
     }
   });
 
@@ -839,9 +1013,43 @@ function beginLiveCapture(mainWindow) {
 }
 
 // ---------------------------------------------------------------------------
+// Pausar/Reanudar: mantiene la conexión remota y sustituye el micrófono por
+// silencio PCM para no dejar un hueco de transporte ni cerrar el servidor.
+// ---------------------------------------------------------------------------
+function togglePauseStream(mainWindow) {
+  if (!session) {
+    sendLog(mainWindow, 'No hay ninguna transmisión activa para pausar.');
+    return { ok: false, reason: 'not-streaming' };
+  }
+  if (session.phase === 'live') {
+    session.phase = 'paused';
+    sendStatus(mainWindow, 'paused', elapsedSeconds());
+    sendLog(mainWindow, 'Transmisión pausada. Se envía silencio mientras la conexión permanece activa.');
+    return { ok: true, paused: true };
+  }
+  if (session.phase === 'paused') {
+    session.phase = 'live';
+    sendStatus(mainWindow, 'live', elapsedSeconds());
+    sendLog(mainWindow, 'Transmisión reanudada. El micrófono vuelve a estar al aire.');
+    return { ok: true, paused: false };
+  }
+  sendLog(mainWindow, 'La transmisión solo puede pausarse cuando el audio en vivo está activo.');
+  return { ok: false, reason: 'not-live' };
+}
+
+// ---------------------------------------------------------------------------
 // Detener: (opcional outro con corte diferido a -2s) -> cerrar conexion real
 // ---------------------------------------------------------------------------
 async function stopStream(mainWindow) {
+  if (!session && pendingStart) {
+    pendingStart.stopRequested = true;
+    pendingStart.sourceBridge?.close();
+    pendingStart = null;
+    sendIntroProgress(mainWindow, { done: true });
+    sendLog(mainWindow, 'Conexión detenida mientras se autenticaba con el proveedor.');
+    sendStatus(mainWindow, 'idle', 0);
+    return { ok: true };
+  }
   if (!session) {
     sendLog(mainWindow, 'No hay ninguna transmision activa para detener.');
     return { ok: false, reason: 'not-streaming' };
@@ -850,15 +1058,21 @@ async function stopStream(mainWindow) {
   session.stopRequested = true;
   const phaseAtStop = session.phase;
 
-  if (phaseAtStop === 'connecting' || phaseAtStop === 'intro') {
+  if (phaseAtStop === 'connecting' || phaseAtStop === 'intro' || phaseAtStop === 'reconnecting') {
     if (session.introController) session.introController.abort();
     sendIntroProgress(mainWindow, { done: true });
-    sendLog(mainWindow, 'Transmision detenida antes de llegar al audio en vivo.');
+    if (session.inputStream) {
+      try { session.inputStream.quit(() => {}); } catch { /* noop */ }
+      session.inputStream = null;
+    }
+    sendLog(mainWindow, phaseAtStop === 'reconnecting'
+      ? 'Transmision detenida mientras se intentaba reconectar.'
+      : 'Transmision detenida antes de llegar al audio en vivo.');
     await teardownSession(mainWindow, 'idle');
     return { ok: true };
   }
 
-  if (phaseAtStop === 'live') {
+  if (phaseAtStop === 'live' || phaseAtStop === 'paused') {
     // Cambiar de fase ANTES de detener la captura: el guard del handler
     // 'data' de audio (`session.phase !== 'live'`) debe bloquear cualquier
     // callback que naudiodon dispare durante su propio apagado. Algunos
@@ -920,6 +1134,7 @@ async function teardownSession(mainWindow, finalStatusKind) {
   stopStatusTicker();
   const finishedSession = session;
   session = null;
+  if (finishedSession?.sourceBridge) finishedSession.sourceBridge.close();
 
   await Promise.all([
     gracefullyEndProcess(finishedSession ? finishedSession.encoderProcess : null, 2500),
@@ -932,6 +1147,7 @@ async function teardownSession(mainWindow, finalStatusKind) {
     sendLog(mainWindow, `Grabacion guardada en: ${finishedSession.recordingPath}`);
   }
 
+  sendDeadAir(mainWindow, false);
   sendStatus(mainWindow, finalStatusKind, 0);
   sendLog(mainWindow, 'Transmision finalizada. Desconectado del servidor.');
 }
@@ -974,6 +1190,7 @@ function isStreaming() {
 module.exports = {
   startStream,
   stopStream,
+  togglePauseStream,
   setGain,
   shutdown,
   isStreaming,

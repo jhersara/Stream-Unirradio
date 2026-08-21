@@ -61,4 +61,38 @@ function getDurationSeconds(filePath) {
   });
 }
 
-module.exports = { getDurationSeconds, resolveFfmpegPath };
+function getWaveformData(filePath, width = 960, height = 160) {
+  return new Promise((resolve) => {
+    const ffmpegPath = resolveFfmpegPath();
+    let proc;
+    try {
+      proc = spawn(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-i', filePath,
+        '-filter_complex', `showwavespic=s=${width}x${height}:colors=0x38d9ff:scale=sqrt`,
+        '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'
+      ], { windowsHide: true });
+    } catch {
+      resolve(null);
+      return;
+    }
+
+    const chunks = [];
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    proc.stdout.on('data', (chunk) => chunks.push(chunk));
+    proc.on('error', () => finish(null));
+    proc.on('close', (code) => {
+      if (code !== 0 || chunks.length === 0) {
+        finish(null);
+        return;
+      }
+      finish(`data:image/png;base64,${Buffer.concat(chunks).toString('base64')}`);
+    });
+  });
+}
+
+module.exports = { getDurationSeconds, getWaveformData, resolveFfmpegPath };

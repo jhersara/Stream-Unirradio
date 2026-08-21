@@ -3,6 +3,9 @@ const path = require('path');
 const { registerIpcHandlers } = require('./ipc-handlers');
 const { initAutoUpdater } = require('./auto-updater');
 const ffmpegStream = require('./ffmpeg-stream');
+const podcastRecorder = require('./podcast-recorder');
+const podcastExporter = require('./podcast-exporter');
+const { startScheduler } = require('./scheduler');
 
 let mainWindow = null;
 let forceClose = false;
@@ -86,6 +89,7 @@ function bootstrapApp() {
   app.whenReady().then(() => {
     createWindow();
     initAutoUpdater(mainWindow);
+    startScheduler(mainWindow);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -95,6 +99,8 @@ function bootstrapApp() {
   });
 
   app.on('window-all-closed', () => {
+    podcastExporter.cancelExport();
+    podcastRecorder.shutdown();
     ffmpegStream.shutdown();
     if (process.platform !== 'darwin') {
       app.quit();
@@ -102,6 +108,8 @@ function bootstrapApp() {
   });
 
   app.on('before-quit', () => {
+    podcastExporter.cancelExport();
+    podcastRecorder.shutdown();
     ffmpegStream.shutdown();
   });
 }

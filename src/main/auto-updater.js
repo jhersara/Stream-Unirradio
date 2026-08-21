@@ -34,6 +34,16 @@ function initAutoUpdater(mainWindow) {
     sendUpdateState(mainWindow, { state: 'available', version: info.version });
   });
 
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateState(mainWindow, {
+      state: 'downloading',
+      percent: progress.percent,
+      transferred: progress.transferred,
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond
+    });
+  });
+
   autoUpdater.on('update-not-available', () => {
     console.log('[auto-updater] No hay actualizaciones disponibles.');
     sendLog(mainWindow, `Ya tienes la ultima version instalada (v${app.getVersion()}).`);
@@ -47,8 +57,10 @@ function initAutoUpdater(mainWindow) {
   });
 
   autoUpdater.on('error', (err) => {
-    const message = err ? (err.stack || err.toString()) : 'desconocido';
+    const message = err ? (err.message || err.stack || err.toString()) : 'desconocido';
     console.error('[auto-updater] Error verificando actualizaciones:', message);
+    sendLog(mainWindow, `Actualización: ${message}`);
+    sendUpdateState(mainWindow, { state: 'error', message });
   });
 
   if (app.isPackaged) {
@@ -67,8 +79,10 @@ function initAutoUpdater(mainWindow) {
  */
 function checkNow(mainWindow) {
   autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    const message = err && (err.message || err.toString()) ? (err.message || err.toString()) : 'Error desconocido';
     console.error('[auto-updater] No se pudo verificar actualizaciones:', err);
-    sendLog(mainWindow, `No se pudo verificar actualizaciones: ${err.message || err}`);
+    sendLog(mainWindow, `No se pudo verificar actualizaciones: ${message}`);
+    sendUpdateState(mainWindow, { state: 'error', message });
   });
 }
 

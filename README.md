@@ -1,8 +1,8 @@
 # Stream-Unirradio
 
-Aplicación de escritorio (Electron) para transmitir audio en vivo hacia Zeno.fm / Icecast.
+Aplicación de escritorio (Electron) para transmitir audio en vivo hacia Zeno.fm, Centova Cast Icecast y Centova Cast SHOUTcast.
 Migración del prototipo original en Python (CustomTkinter) a Electron, manteniendo la misma
-lógica de conexión (ffmpeg + protocolo `icecast://` con `-legacy_icecast 1`) y añadiendo una
+lógica de conexión Icecast (FFmpeg + protocolo `icecast://` con `-legacy_icecast 1`) y añadiendo una
 interfaz más flexible, reutilizando el sistema de marca de UNIR Radio (Poppins, paleta de
 colores) definido en el proyecto principal (`../app`, `../styles`).
 
@@ -62,14 +62,12 @@ requisitos a implementar):
 10. **Identidad visual: estilo Visual Studio Code (Dark+) con acentos UNIR Radio.** A pedido
     explícito del usuario, se reemplazó el tema "SaaS card" (paleta completa del sitio +
     Poppins + Orbitron) por la estética estructural de VS Code: activity bar de 48px solo-
-    iconos, barra de estado inferior, paneles planos de esquinas rectas (`--radius: 3px`, sin
-    sombras/degradados), fuente del sistema (`Segoe UI` / `-apple-system`, sin Google Fonts) y
-    la paleta neutra real de VS Code Dark+ (`#1e1e1e` editor, `#252526` paneles, `#333333`
-    activity bar, `#3c3c3c` bordes/inputs). El navy `#13294B`/`#1d4179` y el gold `#fcc332` de
-    UNIR Radio se conservan como ACENTO (marca en el activity bar, botón principal, foco,
-    estado "en vivo") en vez del azul `#007acc` por defecto de VS Code — mismo patrón que usan
-    los temas de VS Code que recolorean el acento sin tocar la estructura. Iconos de línea
-    minimalista escritos a mano en `src/renderer/icons.js` (estilo Lucide/Feather), sin cambios.
+    iconos, barra de estado inferior, paneles planos de esquinas rectas, fuente del sistema
+    (`Segoe UI` / `-apple-system`, sin Google Fonts). El acento de color (originalmente el navy
+    `#13294B` / gold `#fcc332` de UNIR Radio) se maneja como variables CSS reemplazables sobre
+    esa misma estructura — y de hecho se reemplazó por completo en la Fase 8 (violeta/magenta),
+    sin tocar el layout. Iconos de línea minimalista escritos a mano en `src/renderer/icons.js`
+    (estilo Lucide/Feather), sin cambios.
 
 ---
 
@@ -420,13 +418,19 @@ Mejoras de interfaz:
       300x130px, `setAlwaysOnTop('floating')`, y cambia a una barra compacta dedicada
       (`#compact-bar`) con estado + contador + boton de detener, en vez de esconder partes de
       la UI grande con CSS.
+- [x] Barra de progreso de descarga de actualizaciones — vista Información, panel
+      "Actualizaciones". El evento `download-progress` de `electron-updater` no estaba
+      conectado; ahora dispara un nuevo estado `downloading` en `app:update-state` (porcentaje,
+      bytes transferidos/total, velocidad). Barra visual reutiliza `.progress-track`/
+      `.progress-fill` (mismos estilos que intro/outro), con el porcentaje y MB descargados/
+      total como texto al lado; la insignia de la barra de actividad tambien refleja el
+      porcentaje en vivo en su tooltip mientras descarga.
 
-Funcionalidades nuevas (quedan para una futura ronda, no implementadas):
-- [ ] Reconexión automática si se cae la conexión con Zeno (reintentos con espera creciente).
-- [ ] Detección de "aire muerto" (alerta si no hay señal de audio real por X segundos durante
+Funcionalidades nuevas (implementadas en la Fase 9, ver abajo):
+- [x] Reconexión automática si se cae la conexión con Zeno (reintentos con espera creciente).
+- [x] Detección de "aire muerto" (alerta si no hay señal de audio real por X segundos durante
       una transmisión en vivo).
-- [ ] Programación por horario (inicio/fin automático sin intervención manual) — necesita UI de
-      selección de horario + un scheduler persistente en el proceso principal.
+- [x] Programación por horario (inicio/fin automático sin intervención manual).
 
 ## Fase 8 — Rebrand: nuevo icono + paleta violeta/magenta
 
@@ -456,6 +460,52 @@ navy/gold quedaron atras).
       en `resources/icon.ico` y que la paleta nueva le gusta en la app real (esto se hizo sin
       poder probarlo visualmente en vivo).
 
+## Fase 9 — Reconexión automática, aire muerto, y programación por horario
+
+Las 3 funcionalidades grandes que habían quedado pendientes de la Fase 7, todas tocando
+directamente el motor de streaming (`ffmpeg-stream.js`).
+
+- [x] **Reconexión automática.** Si el proceso encoder muere sin que el usuario haya pedido
+      detener (`session.stopRequested === false`) mientras la fase es `'live'` o `'intro'`, en
+      vez de cortar la transmisión de inmediato se llama a `attemptReconnect()`: reintenta con
+      espera creciente (`3s, 6s, 12s, 24s, 30s` — 5 intentos) reconstruyendo un encoder nuevo
+      con la MISMA config. Durante los reintentos, la captura de microfono (`naudiodon`) y la
+      grabación local NO se detienen — solo se quedan momentaneamente sin encoder al que
+      escribir (`writeToEncoder` ya es seguro con un proceso nulo/muerto), asi que no hay que
+      reabrir el dispositivo de audio ni cortar una grabacion en curso por un corte breve. Si
+      los 5 intentos fallan, recien ahi se corta de verdad (`handleUnexpectedTermination`).
+      Nuevo estado de UI `reconnecting` (punto/texto "Reconectando..." en el hero y la barra de
+      estado). El usuario puede cancelar en cualquier momento con Detener, incluso a mitad de un
+      reintento.
+  - **Alcance deliberado**: NO se reconecta si el corte pasa durante la fase `outro` (ya se
+    esta terminando la transmision a proposito; reanudar el outro desde donde quedo agregaria
+    bastante complejidad para un caso borde raro dado lo corto que suele ser un outro).
+- [x] **Detección de "aire muerto".** Dentro del mismo bloque throttled (~15/seg) que ya
+      calculaba el vumetro, se rastrea cuanto tiempo lleva el nivel de pico por debajo de un
+      umbral de silencio (`SILENCE_PEAK_THRESHOLD = 0.02`, ~-34dB) de forma continua. Pasados
+      `DEAD_AIR_SECONDS = 15` segundos, se dispara UNA alerta (log + evento `stream:dead-air`
+      con `active: true`) — no se repite en cada chequeo. Se limpia sola (con aviso de
+      "recuperado") en cuanto vuelve a haber señal. En el renderer, un banner rojo aparece
+      arriba del panel del vumetro en la vista Estudio (`#dead-air-banner`) mas un sonido de
+      error una sola vez.
+- [x] **Programación por horario.** Nuevos modulos `schedule-store.js` (persistencia,
+      `schedule.json`) y `scheduler.js` (logica de disparo). El scheduler usa SONDEO periodico
+      (`setInterval` cada 20s), no un `setTimeout` de larga duracion calculado una sola vez —
+      mas robusto ante suspension del equipo, cambios de hora del sistema, etc.: en cada
+      chequeo compara la hora actual contra `startTime`/`stopTime` configurados, valida que hoy
+      sea uno de los `days` activos, y evita disparar la MISMA accion dos veces el mismo dia via
+      una clave `accion-YYYY-MM-DD`. Al iniciar automáticamente usa la ULTIMA configuracion
+      guardada en `settings-store.js` (la misma que se ve en Configuracion) con
+      `recordSession` tomado del checkbox "Grabar automaticamente" del horario (no se puede
+      mostrar el modal de confirmacion Si/No porque nadie esta ahi para responderlo). Nueva
+      seccion en la vista Configuracion: activar/desactivar, hora de inicio, hora de fin,
+      selector de dias (7 botones toggle, L-D), y el checkbox de grabacion automatica. Todo se
+      persiste solo en cada cambio (`persistSchedule()`), igual patron que `persistSettings()`.
+- [ ] **Pendiente de confirmar por el usuario**: probar los 3 en condiciones reales (cortar el
+      internet a mitad de una transmision para ver la reconexion, silenciar el microfono 15s
+      para ver la alerta de aire muerto, y dejar una programacion armada para el dia siguiente).
+      Ninguno de los 3 se pudo probar en vivo durante la implementacion.
+
 ---
 
 ## Estructura de carpetas
@@ -469,12 +519,15 @@ Stream-Unirradio/
 └── src/
     ├── main/
     │   ├── main.js            # proceso principal, ciclo de vida de la app, instancia unica
-    │   ├── ffmpeg-stream.js   # motor de streaming, grabacion local, prueba de microfono
+    │   ├── ffmpeg-stream.js   # motor de streaming, grabacion local, prueba de microfono,
+    │   │                      # reconexion automatica, deteccion de aire muerto
     │   ├── media-probe.js     # duración de audio via ffmpeg -i (implementado)
     │   ├── audio-capture.js   # captura de micrófono con naudiodon (implementado)
     │   ├── library-manager.js # biblioteca persistente y unificada de pistas (implementado)
     │   ├── history-store.js   # historial de transmisiones (implementado)
     │   ├── settings-store.js  # configuracion persistida, password cifrada con safeStorage
+    │   ├── schedule-store.js  # persistencia de la programacion por horario
+    │   ├── scheduler.js       # sondeo periodico que dispara inicio/fin programados
     │   ├── ipc-events.js      # helpers centralizados para emitir eventos al renderer
     │   ├── ipc-handlers.js    # registro de canales IPC
     │   └── auto-updater.js    # electron-updater + estado estructurado para popup/insignia
@@ -536,3 +589,160 @@ máquina (solo crear/editar archivos), así que después de cada tanda de cambio
 
 Este README se actualizará en cada sesión marcando los ítems completados, para que cualquier
 continuación futura sepa exactamente en qué punto quedó el proyecto.
+
+
+## Fase 10 — Modernización UI/UX azul y actualizaciones visibles — IMPLEMENTADA
+
+- [x] Rediseño editorial inspirado en Alixdemy, adaptado a una aplicación de escritorio de radio.
+- [x] Cambio de identidad visual a azul profundo, azul eléctrico y cian, conservando verde/ámbar/rojo para la semántica del audio.
+- [x] Navegación lateral modernizada con marca Stream Radio, etiquetas contextuales, descripciones de cada vista y estado de actualización visible.
+- [x] Dashboard de Estudio actualizado con hero de emisión, contexto de sesión, monitor de señal, contador y actividad operativa.
+- [x] Vúmetro y analizador de espectro actualizados con escala, leyenda de señal, calidad de entrada, gradiente azul/cian y soporte de movimiento reducido.
+- [x] Vistas de Biblioteca, Historial, Configuración e Información actualizadas con bloques editoriales y jerarquía más clara.
+- [x] Flujo de actualizaciones actualizado: comprobando, descargando con porcentaje y velocidad, lista para instalar y botón "Reiniciar para instalar".
+- [x] Insignia persistente en la navegación cuando hay una actualización disponible, en descarga o lista para instalar.
+- [x] Los errores del actualizador ahora se envían también al renderer como estado estructurado y se muestran en la vista Información.
+- [x] Validación de sintaxis de `renderer.js` y `auto-updater.js` completada; la app abre en modo desarrollo sin errores de arranque visibles.
+
+La modernización no modifica el flujo de audio ni envía buffers por IPC. La ampliación futura de métricas RMS, pico hold y canales L/R queda preparada como siguiente mejora del motor de audio.
+
+
+### Mejora visual adicional — Vúmetro y ecualizador en tiempo real
+
+- [x] El vúmetro ahora utiliza un motor visual único basado en `requestAnimationFrame`, con ataque rápido y caída suave para evitar saltos entre eventos IPC.
+- [x] Se añadió retención temporal del pico máximo, con marcador luminoso independiente de la señal actual.
+- [x] El ecualizador de 24 bandas interpola cada frecuencia con una respuesta diferenciada, caída natural, intensidad variable y retención corta del pico por banda.
+- [x] Los eventos del proceso principal solo actualizan objetivos numéricos; ningún buffer de audio cruza hacia el renderer.
+- [x] La animación respeta `prefers-reduced-motion` y reduce el uso de `will-change` cuando el usuario solicita menos movimiento.
+
+
+### Fase de monitorización profesional — IMPLEMENTADA
+
+- [x] El proceso principal calcula RMS estéreo, pico máximo, pico izquierda/derecha y detección de clip sobre cada bloque resumido de monitorización.
+- [x] El evento `stream:vu-level` transporta únicamente métricas numéricas: `peak`, `db`, `rmsDb`, `leftDb`, `rightDb` y `clip`; nunca transporta el buffer PCM.
+- [x] La interfaz muestra RMS, pico retenido, lectura estéreo L/R y estado de clip junto al vúmetro animado.
+- [x] La semántica de señal distingue entre señal estable, señal baja, saturación y ausencia de señal.
+- [x] Validación de sintaxis completada para `ffmpeg-stream.js`, `ipc-events.js` y `renderer.js`; Electron inició correctamente en modo desarrollo.
+
+
+## Fase Podcast Studio — PRIMERA VERSIÓN FUNCIONAL IMPLEMENTADA
+
+- [x] Nueva vista `Podcast Studio` en la navegación principal con identidad visual azul y estructura editorial.
+- [x] Creación, selección, edición y eliminación de episodios persistidos en `app.getPath('userData')/podcast-studio/episodes.json`.
+- [x] Metadatos de episodio: título, descripción, estado de borrador/exportado y ruta de exportación.
+- [x] Línea de tiempo básica con clips de la Biblioteca, duración calculada, eliminación y reordenación por arrastre o controles arriba/abajo.
+- [x] Biblioteca de recursos dentro del editor para añadir pistas a la línea de tiempo.
+- [x] Exportación MP3 con FFmpeg, concatenación en orden, recorte básico por segmento y metadatos de título/comentario.
+- [x] Progreso de exportación visible en la interfaz y actualización del episodio al terminar.
+- [x] La exportación se ejecuta como proceso FFmpeg independiente y no altera el flujo de transmisión en vivo.
+- [x] Prueba real con dos archivos de audio: exportación MP3 válida de 6 segundos confirmada mediante FFprobe.
+
+### Pendiente para la siguiente iteración de Podcast Studio
+
+La base funcional queda lista para ampliar con grabación directa dentro del editor, edición de forma de onda, recortes visuales con handles, pistas separadas para voz y música, normalización, portada, campos RSS y publicación en plataformas.
+
+
+## Fase Podcast Studio — GRABACIÓN DIRECTA DE VOZ IMPLEMENTADA
+
+- [x] Nuevo panel de captura directa dentro del editor de Podcast Studio.
+- [x] La captura utiliza `naudiodon` en el proceso principal y no envía audio PCM por IPC.
+- [x] FFmpeg codifica la toma localmente a MP3 de 192 kbps dentro de `app.getPath('userData')/podcast-studio/recordings`.
+- [x] El editor muestra estado LISTO, GRABANDO, GUARDANDO y ERROR, además de temporizador y nivel de entrada en tiempo real.
+- [x] La toma terminada se añade automáticamente como segmento `recording` al final del episodio activo.
+- [x] El exportador de episodios acepta segmentos de biblioteca y tomas de voz absolutas guardadas por la aplicación.
+- [x] La grabación se cierra al salir de la aplicación para evitar procesos FFmpeg huérfanos.
+- [x] Los módulos modificados pasaron `node --check` y Electron inició correctamente con la nueva integración.
+
+La prueba completa de hardware requiere seleccionar un micrófono válido en Configuración y pulsar “Grabar voz” desde Podcast Studio. Si `naudiodon` no está compilado en el equipo, la interfaz mostrará un error claro sin impedir el arranque del resto de la aplicación.
+
+
+## Fase Podcast Studio — FORMA DE ONDA Y RECORTE NO DESTRUCTIVO IMPLEMENTADOS
+
+- [x] Cada clip de Biblioteca o grabación de voz puede solicitar su forma de onda PNG generada con FFmpeg.
+- [x] La forma de onda se muestra dentro de cada bloque de la línea de tiempo con una política CSP que solo permite `data:` para imágenes generadas localmente.
+- [x] Cada segmento dispone de controles IN y OUT con precisión de décimas de segundo.
+- [x] El recorte actualiza la duración del clip y la duración total del episodio sin modificar el archivo fuente.
+- [x] Los valores `trimStart` y `trimEnd` se guardan en el episodio y el exportador los aplica mediante `atrim` al generar el MP3.
+- [x] Se validó con un audio real la generación de una forma de onda PNG de 960 × 160 píxeles.
+- [x] Los módulos modificados pasaron `node --check` y Electron inició correctamente con la nueva vista.
+
+El siguiente paso recomendado es añadir preview por segmento y edición de volumen/fade in/fade out por clip para acercar el editor a una estación de producción de podcast completa.
+
+
+## Fase Podcast Studio — PREVIEW, VOLUMEN Y FADES IMPLEMENTADOS
+
+- [x] Cada segmento de la línea de tiempo tiene preview individual, respetando sus límites IN/OUT.
+- [x] La preescucha aplica el volumen del segmento y la curva de fade in/fade out en tiempo real.
+- [x] Cada clip dispone de volumen independiente entre 0 y 200 por ciento.
+- [x] Se añadieron controles de fade in y fade out de 0 a 30 segundos por segmento.
+- [x] El modelo persistente conserva `volume`, `fadeIn` y `fadeOut` junto con `trimStart` y `trimEnd`.
+- [x] La exportación FFmpeg aplica `volume` y `afade` antes de concatenar los clips.
+- [x] Se validó con audio real una exportación de 3,5 segundos con volumen al 75 por ciento, fade in de 0,4 segundos y fade out de 0,7 segundos.
+- [x] Electron inició correctamente con la nueva integración y los módulos modificados pasaron `node --check`.
+
+La siguiente mejora recomendada es incorporar automatización de volumen por envolvente y una mezcla multipista para voz, música e identidades sonoras.
+
+
+## Fase Podcast Studio — MEZCLA MULTIPISTA Y ENVOLVENTE IMPLEMENTADAS
+
+- [x] Cada segmento puede pertenecer a una pista de `voice`, `music` o `identity`.
+- [x] Se añadió posición temporal editable para permitir solapamiento entre segmentos y crear una mezcla real.
+- [x] El episodio calcula su duración como el final más lejano de todos los segmentos, incluyendo silencios y solapamientos.
+- [x] Cada clip conserva hasta seis puntos de automatización de volumen con tiempo relativo y ganancia entre 0 y 200 por ciento.
+- [x] La interfaz permite cambiar la pista, posición, ganancia de cada punto, añadir nuevos puntos y eliminar puntos adicionales.
+- [x] La preescucha interpola la envolvente en tiempo real y la combina con fade in, fade out y volumen base.
+- [x] La exportación crea buses separados de voz, música e identidad, mezcla los segmentos de cada bus y finalmente mezcla los buses con `amix`.
+- [x] La exportación aplica los puntos de automatización mediante `volume=...:eval=frame` y mantiene los archivos originales intactos.
+- [x] Se validó con dos audios reales una mezcla solapada de cuatro segundos con envolvente automatizada y FFprobe confirmó la duración.
+- [x] Los módulos modificados pasaron `node --check` y Electron inició correctamente.
+
+La siguiente mejora recomendada es añadir control de ganancia por bus, ducking automático de música bajo la voz y medición RMS/LUFS independiente para cada pista.
+
+
+## Fase Podcast Studio — DUCKING Y LOUDNESS POR PISTA IMPLEMENTADOS
+
+- [x] Se añadió configuración persistente de ducking con activación, reducción, umbral, ataque y recuperación.
+- [x] La exportación utiliza `sidechaincompress` para reducir automáticamente el bus de música cuando el bus de voz supera el umbral.
+- [x] Se conservaron buses separados de voz, música e identidad, con ganancia independiente por bus.
+- [x] Se incorporó un panel visual de monitorización con RMS, LUFS integrado, pico y cantidad de clips por pista.
+- [x] La medición usa FFmpeg `astats` para RMS/pico y `ebur128` para LUFS, calculando valores ponderados por duración dentro de cada bus.
+- [x] Se validó el ducking con dos audios reales y se obtuvo una exportación MP3 válida de cuatro segundos.
+- [x] Se validó la lectura real de métricas con RMS de -18,1 dB, pico de -4,6 dB y LUFS de -15,9 LUFS en una pista de prueba.
+- [x] Los módulos modificados pasaron `node --check` y Electron inició correctamente.
+
+La siguiente mejora recomendada es una fase de masterización final con target LUFS del episodio, limitador true peak y exportación de un informe de loudness junto con el MP3.
+
+
+## Optimización de exportación FFmpeg para episodios largos
+
+La exportación de Podcast Studio ahora utiliza un flujo de procesamiento más controlado para episodios extensos. FFmpeg se ejecuta sin entrada interactiva, con hilos de filtro limitados dinámicamente según la CPU disponible, cola de multiplexado ampliada y un periodo de progreso de 500 milisegundos. El renderer recibe actualizaciones limitadas a intervalos útiles, evitando repintados y eventos IPC innecesarios.
+
+La exportación se puede cancelar desde el botón **Cancelar exportación**. Al cancelar, el proceso FFmpeg se termina, se elimina el archivo parcial y se informa claramente al usuario. También se evita iniciar dos exportaciones simultáneas y el cierre de Electron limpia cualquier exportación activa.
+
+La mezcla multipista, el ducking, los fades, los recortes y la automatización de volumen siguen ejecutándose dentro del mismo grafo FFmpeg, sin cargar el episodio completo en memoria desde JavaScript.
+
+La validación con una fuente de audio real de 60 segundos produjo un MP3 de 60 segundos en aproximadamente 3,92 segundos con mezcla, automatización y ducking activos. La corrección de argumentos confirmó que `max_muxing_queue_size` se aplica en la posición compatible con FFmpeg. Los módulos modificados pasaron `node --check` y Electron inició correctamente.
+
+
+## Adaptadores de proveedores de radio — implementado
+
+La configuración de transmisión ahora utiliza `src/main/radio-providers.js` como registro único de proveedores. El renderer obtiene el catálogo mediante IPC y conserva el proveedor seleccionado en `settings.json`, manteniendo `zeno-icecast` como valor por defecto para que las configuraciones anteriores sigan funcionando.
+
+| Proveedor | Protocolo de fuente | Campos principales | Perfil FFmpeg |
+|---|---|---|---|
+| Zeno.fm · Icecast | Icecast | Host, puerto, mountpoint, usuario y contraseña | URL `icecast://` con `-legacy_icecast 1` |
+| Centova Cast · Icecast | Icecast | Host, puerto, mountpoint, usuario y contraseña | URL `icecast://` con `-legacy_icecast 1` |
+| Centova Cast · SHOUTcast | SHOUTcast ICY sobre TCP | Host, puerto, contraseña y Stream ID opcional | FFmpeg codifica a `pipe:1`; `shoutcast-source.js` realiza el handshake ICY y envía MP3 |
+
+En Centova Cast, los datos deben copiarse desde **Live Source Connections**. El campo de mountpoint se oculta cuando se selecciona SHOUTcast y aparece el campo específico de Stream ID; en Icecast, el mountpoint se considera obligatorio. La interfaz también ofrece mostrar u ocultar la contraseña, copiar host, mountpoint, Stream ID y contraseña, actualizar placeholders por proveedor y mostrar validación visual de los campos.
+
+El motor `ffmpeg-stream.js` ya no construye una URL Icecast fija. En su lugar, llama a `buildEncoderProfile(config)` y utiliza el perfil del proveedor tanto al conectar como al reconectar automáticamente. Para SHOUTcast, FFmpeg codifica el MP3 a `stdout` y `shoutcast-source.js` abre un socket TCP, envía la autenticación `password[:streamId]`, espera `OK2/OK`, transmite las cabeceras `icy-*` y respeta el backpressure del socket. Si un servidor concreto requiere una variante de Stream ID, ruta de fuente o credencial específica, debe prevalecer la plantilla indicada por su panel de **Live Source Connections**.
+
+- [x] Registro de Zeno.fm/Icecast y Centova Cast Icecast/SHOUTcast.
+- [x] Integración de perfiles de proveedor en la conexión inicial y las reconexiones.
+- [x] Persistencia retrocompatible del campo `provider` y del `streamId` opcional.
+- [x] Selector dinámico con placeholders, campos requeridos y validación visual.
+- [x] Acciones de interfaz para mostrar/ocultar y copiar credenciales.
+- [x] Pruebas automatizadas de URL, argumentos FFmpeg y validaciones en `test-radio-providers.js`.
+- [x] Prueba local del handshake ICY, Stream ID, cabeceras y escritura de MP3 en `test-shoutcast-source.js`.
+- [x] Prueba de integración de FFmpeg: el perfil SHOUTcast produce MP3 válido por `pipe:1` en `test-ffmpeg-shoutcast-profile.js`.

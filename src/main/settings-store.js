@@ -17,9 +17,11 @@ function getSettingsPath() {
 }
 
 const DEFAULT_SETTINGS = {
+  provider: 'zeno-icecast',
   server: 'link.zeno.fm',
   port: '80',
   mount: '',
+  streamId: '',
   user: 'source',
   deviceId: '',
   introEnabled: true,
@@ -52,7 +54,9 @@ function loadSettings() {
   }
 
   const { passwordEncrypted, ...rest } = saved;
-  return { ...DEFAULT_SETTINGS, ...rest, password };
+  // `provider` se añadió después de la primera versión. El merge con los
+  // valores por defecto mantiene compatibilidad con settings.json antiguos.
+  return { ...DEFAULT_SETTINGS, ...rest, provider: rest.provider || DEFAULT_SETTINGS.provider, password };
 }
 
 function saveSettings(settings) {

@@ -1,10 +1,19 @@
 const { ipcMain, dialog, app, shell } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const libraryManager = require('./library-manager');
+const podcastStore = require('./podcast-store');
+const podcastExporter = require('./podcast-exporter');
+const podcastRecorder = require('./podcast-recorder');
+const { getWaveformData } = require('./media-probe');
+const { measureEpisode } = require('./podcast-metrics');
 const ffmpegStream = require('./ffmpeg-stream');
 const audioCapture = require('./audio-capture');
 const settingsStore = require('./settings-store');
+const radioProviders = require('./radio-providers');
 const autoUpdaterModule = require('./auto-updater');
 const historyStore = require('./history-store');
+const scheduleStore = require('./schedule-store');
 const { sendLog } = require('./ipc-events');
 
 /**
@@ -24,6 +33,10 @@ function registerIpcHandlers(mainWindow) {
 
   ipcMain.handle('stream:stop', async () => {
     return ffmpegStream.stopStream(mainWindow);
+  });
+
+  ipcMain.handle('stream:toggle-pause', async () => {
+    return ffmpegStream.togglePauseStream(mainWindow);
   });
 
   ipcMain.handle('stream:set-gain', async (event, value) => {
@@ -102,11 +115,97 @@ function registerIpcHandlers(mainWindow) {
   });
 
   // ---------------------------------------------------------------------
+  // Podcast Studio
+  // ---------------------------------------------------------------------
+  ipcMain.handle('podcast:list', async () => podcastStore.listEpisodes());
+
+  ipcMain.handle('podcast:create', async (event, input) => podcastStore.createEpisode(input || {}));
+
+  ipcMain.handle('podcast:update', async (event, id, patch) => podcastStore.updateEpisode(id, patch || {}));
+
+  ipcMain.handle('podcast:delete', async (event, id) => ({ ok: podcastStore.deleteEpisode(id) }));
+
+  ipcMain.handle('podcast:export', async (event, id) => {
+    const episode = podcastStore.getEpisode(id);
+    if (!episode) return { ok: false, reason: 'episode-not-found' };
+
+    const safeTitle = String(episode.title || 'episodio')
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 100) || 'episodio';
+    const defaultPath = path.join(app.getPath('documents'), 'Stream Radio - Podcasts', `${safeTitle}.mp3`);
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Exportar episodio',
+      defaultPath,
+      buttonLabel: 'Exportar MP3',
+      filters: [{ name: 'Podcast MP3', extensions: ['mp3'] }]
+    });
+    if (result.canceled || !result.filePath) return { ok: false, reason: 'cancelled' };
+
+    try {
+      const exported = await podcastExporter.exportEpisode(mainWindow, episode, result.filePath);
+      podcastStore.updateEpisode(id, {
+        status: 'exported',
+        exportPath: exported.outputPath,
+        exportedAt: new Date().toISOString()
+      });
+      sendLog(mainWindow, `Episodio exportado: ${exported.outputPath}`);
+      return { ok: true, ...exported };
+    } catch (error) {
+      if (error.code === 'EXPORT_CANCELLED') return { ok: false, reason: 'cancelled', message: error.message };
+      if (error.code === 'EXPORT_BUSY') return { ok: false, reason: 'busy', message: error.message };
+      sendLog(mainWindow, `ERROR exportando episodio: ${error.message}`);
+      return { ok: false, reason: 'export-failed', message: error.message };
+    }
+  });
+
+  ipcMain.handle('podcast:reveal-export', async (event, filePath) => {
+    if (filePath) shell.showItemInFolder(filePath);
+    return { ok: true };
+  });
+
+  ipcMain.handle('podcast:export-cancel', async () => podcastExporter.cancelExport());
+  ipcMain.handle('podcast:export-status', async () => ({ exporting: podcastExporter.isExporting() }));
+
+  ipcMain.handle('podcast:record-start', async (event, deviceId) => podcastRecorder.start(mainWindow, deviceId));
+
+  ipcMain.handle('podcast:record-stop', async () => podcastRecorder.stop(mainWindow));
+
+  ipcMain.handle('podcast:record-status', async () => ({ recording: podcastRecorder.isRecording() }));
+
+  ipcMain.handle('podcast:waveform', async (event, segment) => {
+    const filePath = segment?.type === 'recording'
+      ? segment.sourceId
+      : libraryManager.getTrackPath(segment?.sourceId);
+    if (!filePath || !fs.existsSync(filePath)) return { ok: false, dataUrl: null };
+    const dataUrl = await getWaveformData(filePath);
+    return { ok: Boolean(dataUrl), dataUrl };
+  });
+
+  ipcMain.handle('podcast:segment-audio', async (event, segment) => {
+    const filePath = segment?.type === 'recording'
+      ? segment.sourceId
+      : libraryManager.getTrackPath(segment?.sourceId);
+    if (!filePath || !fs.existsSync(filePath)) return { ok: false, dataUrl: null };
+    const extension = path.extname(filePath).toLowerCase();
+    const mime = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg' }[extension] || 'audio/mpeg';
+    const dataUrl = `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
+    return { ok: true, dataUrl };
+  });
+
+  ipcMain.handle('podcast:metrics', async (event, episode) => {
+    return measureEpisode(episode || {});
+  });
+
+  // ---------------------------------------------------------------------
   // Configuracion persistida (servidor, credenciales, pistas activas)
   // ---------------------------------------------------------------------
   ipcMain.handle('settings:load', async () => {
     return settingsStore.loadSettings();
   });
+
+  ipcMain.handle('providers:list', async () => radioProviders.listProviders());
 
   ipcMain.handle('settings:save', async (event, settings) => {
     settingsStore.saveSettings(settings);
@@ -136,6 +235,17 @@ function registerIpcHandlers(mainWindow) {
   ipcMain.handle('history:reveal-recording', async (event, filePath) => {
     if (filePath) shell.showItemInFolder(filePath);
     return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------
+  // Programacion automatica (inicio/fin de transmision por horario)
+  // ---------------------------------------------------------------------
+  ipcMain.handle('schedule:load', async () => {
+    return scheduleStore.loadSchedule();
+  });
+
+  ipcMain.handle('schedule:save', async (event, schedule) => {
+    return scheduleStore.saveSchedule(schedule);
   });
 
   // ---------------------------------------------------------------------

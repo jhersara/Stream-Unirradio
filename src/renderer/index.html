@@ -2,308 +2,304 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';" />
   <title>Stream Radio</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="app-shell">
-
     <div class="workbench">
 
-      <!-- ==================== ACTIVITY BAR ==================== -->
-      <nav class="activity-bar">
-        <div class="activity-brand" title="Stream UNIR Radio">UR</div>
-
-        <div class="activity-items">
-          <button type="button" class="activity-item activity-item-active" data-view="studio" title="Estudio">
-            <span class="activity-icon" data-icon="studio"></span>
-          </button>
-          <button type="button" class="activity-item" data-view="library" title="Biblioteca">
-            <span class="activity-icon" data-icon="library"></span>
-          </button>
-          <button type="button" class="activity-item" data-view="history" title="Historial">
-            <span class="activity-icon" data-icon="history"></span>
-          </button>
-          <button type="button" class="activity-item" data-view="config" title="Configuracion">
-            <span class="activity-icon" data-icon="settings"></span>
-          </button>
-          <button type="button" class="activity-item" data-view="about" title="Informacion">
-            <span class="activity-icon" data-icon="info"></span>
-          </button>
+      <!-- ==================== NAVEGACIÓN PRINCIPAL ==================== -->
+      <aside class="activity-bar" aria-label="Navegación principal">
+        <div class="activity-brand" title="Stream Radio · UNIR Radio">
+          <span class="brand-symbol">SR</span>
+          <span class="brand-lockup">
+            <strong>Stream Radio</strong>
+            <small>UNIR Radio</small>
+          </span>
         </div>
 
-        <button type="button" class="activity-update-badge" id="activity-update-badge" hidden title="Actualizacion disponible">
-          <span class="activity-update-dot"></span>
-        </button>
-      </nav>
+        <div class="activity-nav-label">Operación</div>
+        <nav class="activity-items">
+          <button type="button" class="activity-item activity-item-active" data-view="studio" title="Estudio" aria-label="Estudio">
+            <span class="activity-icon" data-icon="studio"></span>
+            <span class="activity-item-copy"><strong>Estudio</strong><small>En directo</small></span>
+          </button>
+          <button type="button" class="activity-item" data-view="podcast" title="Podcast Studio" aria-label="Podcast Studio">
+            <span class="activity-icon" data-icon="mic"></span>
+            <span class="activity-item-copy"><strong>Podcast Studio</strong><small>Crear episodio</small></span>
+          </button>
+          <button type="button" class="activity-item" data-view="library" title="Biblioteca" aria-label="Biblioteca">
+            <span class="activity-icon" data-icon="library"></span>
+            <span class="activity-item-copy"><strong>Biblioteca</strong><small>Pistas y clips</small></span>
+          </button>
+          <button type="button" class="activity-item" data-view="history" title="Historial" aria-label="Historial">
+            <span class="activity-icon" data-icon="history"></span>
+            <span class="activity-item-copy"><strong>Historial</strong><small>Sesiones</small></span>
+          </button>
+          <button type="button" class="activity-item" data-view="config" title="Configuración" aria-label="Configuración">
+            <span class="activity-icon" data-icon="settings"></span>
+            <span class="activity-item-copy"><strong>Configuración</strong><small>Conexión y audio</small></span>
+          </button>
+          <button type="button" class="activity-item" data-view="about" title="Información" aria-label="Información">
+            <span class="activity-icon" data-icon="info"></span>
+            <span class="activity-item-copy"><strong>Información</strong><small>Versión y sistema</small></span>
+          </button>
+        </nav>
+
+        <div class="activity-footer">
+          <button type="button" class="activity-update-badge" id="activity-update-badge" hidden title="Actualización disponible" aria-label="Ver actualización disponible">
+            <span class="activity-update-dot"></span>
+            <span class="update-badge-copy"><strong>Actualización</strong><small>Disponible</small></span>
+          </button>
+          <div class="activity-footer-caption"><span class="footer-signal-dot"></span> CONTROL DE EMISIÓN</div>
+        </div>
+      </aside>
 
       <!-- ==================== CONTENIDO ==================== -->
       <main class="content">
+        <header class="content-topbar">
+          <div class="topbar-leading">
+            <button type="button" class="topbar-menu-toggle" id="btn-toggle-navigation" aria-label="Abrir menú de navegación" aria-expanded="true" title="Menú de navegación">
+              <span data-icon="menu"></span>
+            </button>
+            <div class="topbar-context">
+              <span class="topbar-eyebrow">STREAM RADIO / UNIR RADIO</span>
+              <strong id="topbar-context-title">Centro de emisión</strong>
+            </div>
+          </div>
+          <div class="topbar-broadcast-controls" aria-label="Controles de emisión">
+            <button type="button" id="btn-start" class="btn-primary topbar-control"><span class="icon-inline" data-icon="play"></span><span>Iniciar</span></button>
+            <button type="button" id="btn-pause" class="btn-secondary topbar-control" disabled><span class="icon-inline" data-icon="pause"></span><span id="btn-pause-label">Pausar</span></button>
+            <button type="button" id="btn-stop" class="btn-danger topbar-control" disabled><span class="icon-inline" data-icon="stop"></span><span>Detener</span></button>
+          </div>
+          <div class="topbar-status" aria-live="polite">
+            <span class="topbar-status-dot" id="topbar-status-dot"></span>
+            <span id="topbar-status-text">Desconectado</span>
+          </div>
+        </header>
 
         <!-- ---------- VISTA: ESTUDIO ---------- -->
         <section class="view view-active" data-view-panel="studio">
-          <h2 class="view-title">Estudio</h2>
+          <div class="studio-intro">
+            <div>
+              <span class="view-kicker">ESTUDIO / TRANSMISIÓN</span>
+              <h1 class="studio-title">Tu emisora, en directo.</h1>
+              <p class="studio-lead">Controla la señal, prepara tus transiciones y lleva tu programa al aire con precisión.</p>
+            </div>
+            <span class="studio-mark">SR<span>•</span></span>
+          </div>
 
           <div class="panel onair-panel" id="onair-hero">
             <div class="onair-left">
               <span class="onair-dot" id="onair-dot"></span>
               <div class="onair-labels">
+                <span class="onair-eyebrow">Estado de la sesión</span>
                 <span class="onair-status" id="onair-status">Desconectado</span>
                 <span class="onair-substatus" id="onair-substatus">Listo para transmitir</span>
               </div>
             </div>
-            <span class="onair-timer" id="onair-timer">00:00:00</span>
+            <div class="onair-right">
+              <span class="onair-timer-label">Tiempo en emisión</span>
+              <span class="onair-timer" id="onair-timer">00:00:00</span>
+            </div>
+            <div class="onair-meta-row">
+              <span class="onair-meta"><span class="meta-pulse"></span> MONITORIZACIÓN ACTIVA</span>
+              <span class="onair-meta">ICECAST / ZENO.FM</span>
+              <span class="onair-meta">44.1 KHZ · MP3 128 KBPS</span>
+            </div>
           </div>
 
-          <div class="panel">
-            <div class="panel-header">
-              <span class="panel-header-title"><span class="icon-inline" data-icon="volume"></span> Vumetro de Entrada</span>
-              <span id="vu-db-value" class="mono-value">-inf dB</span>
+          <div class="dead-air-banner" id="dead-air-banner" hidden>
+            <span class="icon-inline" data-icon="info"></span>
+            No se detecta audio del micrófono. Revisa la conexión.
+          </div>
+
+          <div class="panel signal-panel">
+            <div class="panel-header signal-panel-header">
+              <span class="panel-header-title"><span class="icon-inline" data-icon="volume"></span> Monitor de señal</span>
+              <span id="signal-quality" class="signal-quality">SIN SEÑAL</span>
             </div>
-            <div class="vu-meter" id="vu-meter"></div>
-            <div class="spectrum-meter" id="spectrum-meter"></div>
+
+            <div class="meter-block">
+              <div class="meter-block-heading">
+                <span class="meter-name">Vúmetro de entrada</span>
+                <span id="vu-db-value" class="mono-value">-inf dB</span>
+              </div>
+              <div class="meter-scale" aria-hidden="true"><span>-60</span><span>-36</span><span>-24</span><span>-12</span><span>-6</span><span>0 dBFS</span></div>
+              <div class="vu-meter" id="vu-meter" role="meter" aria-label="Nivel de entrada" aria-valuemin="-60" aria-valuemax="0"></div>
+              <div class="meter-legend"><span><i class="legend-dot legend-safe"></i> Señal segura</span><span><i class="legend-dot legend-caution"></i> Precaución</span><span><i class="legend-dot legend-clip"></i> Saturación</span></div>
+              <div class="signal-readouts" aria-label="Lecturas profesionales de señal">
+                <div class="signal-readout"><span>RMS</span><strong id="vu-rms-value">-inf dB</strong></div>
+                <div class="signal-readout"><span>PICO RETENIDO</span><strong id="vu-peak-value">-inf dB</strong></div>
+                <div class="signal-readout"><span>ESTÉREO L / R</span><strong id="vu-stereo-value">-inf / -inf</strong></div>
+                <div class="signal-readout signal-readout-clip" id="vu-clip-indicator"><span>CLIP</span><strong>NO</strong></div>
+              </div>
+            </div>
+
+            <div class="spectrum-block">
+              <div class="meter-block-heading"><span class="meter-name">Analizador de espectro</span><span class="mono-value">24 BANDAS</span></div>
+              <div class="spectrum-meter" id="spectrum-meter" aria-label="Analizador de espectro"></div>
+              <div class="spectrum-labels" aria-hidden="true"><span>GRAVES</span><span>MEDIOS</span><span>AGUDOS</span></div>
+            </div>
 
             <div class="gain-row">
-              <label for="gain-slider">Volumen de Transmision</label>
-              <input type="range" id="gain-slider" min="0" max="200" value="100" />
+              <label for="gain-slider">Ganancia de transmisión</label>
+              <input type="range" id="gain-slider" min="0" max="200" value="100" aria-label="Ganancia de transmisión" />
               <span id="gain-value" class="mono-value">100%</span>
             </div>
           </div>
 
           <div class="panel track-progress-panel" id="intro-progress-card" hidden>
             <div class="panel-header">
-              <span class="panel-header-title"><span class="icon-inline" data-icon="play"></span> Reproduciendo Intro</span>
+              <span class="panel-header-title"><span class="icon-inline" data-icon="play"></span> Reproduciendo intro</span>
               <span id="intro-progress-time" class="mono-value">00:00 / 00:00</span>
             </div>
-            <div class="progress-track">
-              <div class="progress-fill intro-fill" id="intro-progress-fill"></div>
-            </div>
+            <div class="progress-track"><div class="progress-fill intro-fill" id="intro-progress-fill"></div></div>
           </div>
 
           <div class="panel track-progress-panel" id="outro-progress-card" hidden>
             <div class="panel-header">
-              <span class="panel-header-title"><span class="icon-inline" data-icon="play"></span> Reproduciendo Outro (corte en los ultimos 2s)</span>
+              <span class="panel-header-title"><span class="icon-inline" data-icon="play"></span> Reproduciendo outro · cierre en los últimos 2 s</span>
               <span id="outro-progress-time" class="mono-value">00:00 / 00:00</span>
             </div>
-            <div class="progress-track">
-              <div class="progress-fill outro-fill" id="outro-progress-fill"></div>
-            </div>
+            <div class="progress-track"><div class="progress-fill outro-fill" id="outro-progress-fill"></div></div>
           </div>
 
-          <div class="button-row">
-            <button type="button" id="btn-start" class="btn-primary">
-              <span class="icon-inline" data-icon="play"></span> Iniciar Transmision
-            </button>
-            <button type="button" id="btn-stop" class="btn-danger" disabled>
-              <span class="icon-inline" data-icon="stop"></span> Detener Transmision
-            </button>
+          <div class="studio-actions studio-actions-hint">
+            <span class="action-label">Controles de emisión</span>
+            <span class="action-hint">Iniciar, pausar y detener están siempre disponibles en la barra superior.</span>
           </div>
 
           <div class="output-panel">
-            <div class="output-panel-header">
-              <span class="output-tab">REGISTRO</span>
-            </div>
+            <div class="output-panel-header"><span class="output-tab">ACTIVIDAD</span><span class="output-panel-caption">Eventos y diagnóstico de la sesión</span></div>
             <div class="log-output" id="log-output"></div>
+          </div>
+        </section>
+
+        <!-- ---------- VISTA: PODCAST STUDIO ---------- -->
+        <section class="view podcast-view" data-view-panel="podcast">
+          <div class="view-header-row podcast-header-row">
+            <div><span class="view-kicker">PRODUCCIÓN / PODCAST</span><h2 class="view-title">Podcast Studio</h2><p class="view-subtitle">Convierte tus pistas y grabaciones en episodios con una línea de tiempo simple, metadatos y exportación MP3.</p></div>
+            <button type="button" class="btn-primary" id="btn-new-episode"><span class="icon-inline" data-icon="plus"></span> Nuevo episodio</button>
+          </div>
+
+          <div class="podcast-layout">
+            <aside class="podcast-episodes-panel">
+              <div class="podcast-panel-heading"><span class="panel-header-title">Tus episodios</span><span class="mono-value" id="episode-count">0</span></div>
+              <div class="episode-list" id="episode-list"><p class="track-list-empty">Todavía no hay episodios.</p></div>
+            </aside>
+
+            <div class="podcast-editor" id="podcast-editor" hidden>
+              <div class="podcast-editor-heading"><div><span class="view-kicker">EPISODIO ACTIVO</span><h3 id="episode-editor-title">Nuevo episodio</h3></div><span class="episode-status-pill" id="episode-status-pill">BORRADOR</span></div>
+              <div class="podcast-meta-form">
+                <div class="field"><label for="episode-title">Título del episodio</label><input type="text" id="episode-title" maxlength="160" placeholder="Ej. La voz detrás de la radio" /></div>
+                <div class="field field-full"><label for="episode-description">Descripción</label><textarea id="episode-description" maxlength="2000" rows="3" placeholder="Describe el episodio para tu audiencia…"></textarea></div>
+              </div>
+
+              <div class="voice-recorder-panel" id="voice-recorder-panel">
+                <div class="voice-recorder-heading"><div><span class="view-kicker">CAPTURA DIRECTA</span><h4>Grabar voz</h4><p>La toma se guarda como un clip y se añade al final de la línea de tiempo.</p></div><span class="recording-state-pill" id="recording-state-pill">LISTO</span></div>
+                <div class="voice-recorder-main"><div class="recording-timer" id="recording-timer">00:00</div><div class="recording-meter-wrap"><div class="recording-meter" id="recording-meter" role="meter" aria-label="Nivel de grabación de voz"></div><div class="recording-meter-meta"><span id="recording-db">-inf dB</span><span id="recording-rms">RMS -inf dB</span></div></div><button type="button" class="record-button" id="btn-record-voice"><span class="record-button-icon"></span><span id="record-button-label">Grabar voz</span></button></div>
+                <p class="recording-help" id="recording-help">Selecciona un dispositivo de entrada en Configuración antes de grabar.</p>
+              </div>
+
+              <div class="mix-monitor-panel">
+                <div class="mix-monitor-heading"><div><span class="view-kicker">MEZCLA / MONITORIZACIÓN</span><h4>Buses y ducking</h4><p>Reduce la música automáticamente cuando la voz supera el umbral definido.</p></div><button type="button" class="btn-secondary" id="btn-measure-mix">Medir mezcla</button></div>
+                <div class="mix-control-row"><label class="mix-toggle"><input type="checkbox" id="mix-ducking-enabled" checked /><span>DUCKING DE MÚSICA</span></label><label>REDUCCIÓN <input type="range" min="0" max="1" step="0.05" value="0.35" id="mix-duck-amount" /><output id="mix-duck-amount-output">35%</output></label><label>UMBRAL <input type="range" min="-60" max="0" step="1" value="-32" id="mix-duck-threshold" /><output id="mix-duck-threshold-output">-32 dB</output></label></div>
+                <div class="bus-meter-grid">
+                  <div class="bus-meter-card"><div><span class="bus-name bus-voice">VOZ</span><span class="bus-segment-count" id="mix-segments-voice">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-voice">-inf</strong></span><span>LUFS <strong id="mix-lufs-voice">-inf</strong></span><span>PEAK <strong id="mix-peak-voice">-inf</strong></span></div></div>
+                  <div class="bus-meter-card"><div><span class="bus-name bus-music">MÚSICA</span><span class="bus-segment-count" id="mix-segments-music">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-music">-inf</strong></span><span>LUFS <strong id="mix-lufs-music">-inf</strong></span><span>PEAK <strong id="mix-peak-music">-inf</strong></span></div></div>
+                  <div class="bus-meter-card"><div><span class="bus-name bus-identity">IDENTIDAD</span><span class="bus-segment-count" id="mix-segments-identity">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-identity">-inf</strong></span><span>LUFS <strong id="mix-lufs-identity">-inf</strong></span><span>PEAK <strong id="mix-peak-identity">-inf</strong></span></div></div>
+                </div>
+              </div>
+
+              <div class="podcast-timeline-section"><div class="podcast-section-heading"><div><span class="view-kicker">LÍNEA DE TIEMPO</span><h4>Orden del episodio</h4></div><span class="mono-value" id="timeline-duration">00:00</span></div><div class="podcast-timeline" id="podcast-timeline"><div class="timeline-empty">Añade clips desde la biblioteca para comenzar.</div></div><div class="timeline-actions"><span class="timeline-hint">Arrastra los clips para cambiar el orden.</span><button type="button" class="btn-secondary" id="btn-clear-timeline">Limpiar línea de tiempo</button></div></div>
+
+              <div class="podcast-clips-section"><div class="podcast-section-heading"><div><span class="view-kicker">RECURSOS</span><h4>Añadir un clip</h4></div><span class="mono-value">BIBLIOTECA</span></div><div class="podcast-clip-library" id="podcast-clip-library"><p class="track-list-empty">Importa pistas en Biblioteca para usarlas aquí.</p></div></div>
+
+              <div class="podcast-editor-actions"><button type="button" class="btn-danger" id="btn-delete-episode"><span class="icon-inline" data-icon="trash"></span> Eliminar borrador</button><div><button type="button" class="btn-secondary" id="btn-save-episode"><span class="icon-inline" data-icon="check"></span> Guardar cambios</button><button type="button" class="btn-primary" id="btn-export-episode"><span class="icon-inline" data-icon="upload"></span> Exportar MP3</button></div></div>
+              <div class="podcast-export-status" id="podcast-export-status" hidden><div class="update-progress-top"><span id="podcast-export-label">Preparando exportación…</span><span class="mono-value" id="podcast-export-percent">0%</span></div><div class="progress-track"><div class="progress-fill" id="podcast-export-fill"></div></div><div class="podcast-export-footer"><span class="update-progress-meta" id="podcast-export-meta"></span><button type="button" class="btn-secondary btn-cancel-export" id="btn-cancel-export" hidden>Cancelar exportación</button></div></div>
+            </div>
+
+            <div class="podcast-empty-state" id="podcast-empty-state"><span class="podcast-empty-mark">✦</span><span class="view-kicker">PODCAST STUDIO</span><h3>Tu próximo episodio empieza aquí.</h3><p>Crea un episodio, añade clips de tu biblioteca y expórtalo como MP3 cuando esté listo.</p><button type="button" class="btn-primary" id="btn-empty-new-episode"><span class="icon-inline" data-icon="plus"></span> Crear episodio</button></div>
           </div>
         </section>
 
         <!-- ---------- VISTA: BIBLIOTECA ---------- -->
         <section class="view" data-view-panel="library">
           <div class="view-header-row">
-            <div>
-              <h2 class="view-title">Biblioteca de Pistas</h2>
-              <p class="view-subtitle">Las pistas importadas se guardan dentro de la app y quedan disponibles para cualquier transmision, como intro o como outro, aunque muevas o borres el archivo original.</p>
-            </div>
-            <button type="button" class="btn-secondary" id="btn-import-track">
-              <span class="icon-inline" data-icon="upload"></span> Importar pistas
-            </button>
+            <div><span class="view-kicker">RECURSOS / AUDIO</span><h2 class="view-title">Biblioteca de pistas</h2><p class="view-subtitle">Importa intros, outros y clips de audio. Se guardan dentro de la app y quedan disponibles para cualquier transmisión.</p></div>
+            <button type="button" class="btn-secondary" id="btn-import-track"><span class="icon-inline" data-icon="upload"></span> Importar pistas</button>
           </div>
-
-          <div class="track-list" id="track-list">
-            <p class="track-list-empty">No hay pistas guardadas todavia.</p>
-          </div>
+          <div class="library-summary"><span><strong>Biblioteca unificada</strong> · una pista puede ser intro u outro</span><span class="library-summary-accent">PREESCUCHA DISPONIBLE</span></div>
+          <div class="track-list" id="track-list"><p class="track-list-empty">No hay pistas guardadas todavía.</p></div>
         </section>
 
         <!-- ---------- VISTA: HISTORIAL ---------- -->
         <section class="view" data-view-panel="history">
-          <h2 class="view-title">Historial de Transmisiones</h2>
-          <p class="view-subtitle">Registro de las ultimas sesiones. Si una quedo grabada, puedes abrir la carpeta del archivo directamente.</p>
-
-          <div class="history-list" id="history-list">
-            <p class="track-list-empty">Todavia no hay transmisiones registradas.</p>
-          </div>
+          <span class="view-kicker">REGISTRO / OPERACIÓN</span>
+          <h2 class="view-title">Historial de transmisiones</h2>
+          <p class="view-subtitle">Revisa tus sesiones recientes, su duración y las grabaciones locales disponibles.</p>
+          <div class="history-list" id="history-list"><p class="track-list-empty">Todavía no hay transmisiones registradas.</p></div>
         </section>
 
-        <!-- ---------- VISTA: CONFIGURACION ---------- -->
+        <!-- ---------- VISTA: CONFIGURACIÓN ---------- -->
         <section class="view" data-view-panel="config">
-          <h2 class="view-title">Configuracion del Servidor</h2>
-          <p class="view-subtitle">Datos de conexion Icecast / Zeno.fm y seleccion de dispositivo de entrada.</p>
+          <span class="view-kicker">SISTEMA / AJUSTES</span>
+          <h2 class="view-title">Configuración del estudio</h2>
+          <p class="view-subtitle">Conecta tu servidor, selecciona la entrada de audio y prepara tus transiciones.</p>
 
-          <div class="config-grid">
-            <div class="field">
-              <label for="input-servidor">Direccion del Servidor (Host)</label>
-              <input type="text" id="input-servidor" value="link.zeno.fm" />
-            </div>
-
-            <div class="field">
-              <label for="input-puerto">Puerto</label>
-              <input type="text" id="input-puerto" value="80" />
-            </div>
-
-            <div class="field field-full">
-              <label for="input-punto">Punto de Montaje (Mountpoint)</label>
-              <input type="text" id="input-punto" value="" placeholder="Copiar exactamente desde el panel de Zeno.fm" />
-            </div>
-
-            <div class="field">
-              <label for="input-usuario">Nombre de Usuario</label>
-              <input type="text" id="input-usuario" value="source" />
-            </div>
-
-            <div class="field">
-              <label for="input-password">Contrasena de Montaje</label>
-              <input type="password" id="input-password" value="" />
-            </div>
-
-            <div class="field field-full">
-              <label for="select-device">Dispositivo de Entrada (Microfono / Consola)</label>
-              <select id="select-device">
-                <option value="">Cargando dispositivos...</option>
-              </select>
-              <div class="mic-test-row">
-                <button type="button" class="btn-secondary" id="btn-test-mic">
-                  <span class="icon-inline" data-icon="volume"></span> Probar microfono
-                </button>
-                <div class="mic-test-meter" id="mic-test-meter"></div>
-                <span class="mono-value" id="mic-test-db"></span>
+          <div class="settings-section"><div class="settings-section-heading"><span class="settings-section-number">01</span><div><h3>Proveedor de emisión</h3><p>Selecciona el protocolo que aparece en las conexiones de fuente de tu plataforma.</p></div></div>
+            <div class="config-grid">
+              <div class="field field-full provider-field">
+                <label for="select-provider">Proveedor de radio</label>
+                <div class="provider-select-row"><select id="select-provider"><option value="zeno-icecast">Zeno.fm · Icecast</option><option value="centova-icecast">Centova Cast · Icecast</option><option value="centova-shoutcast">Centova Cast · SHOUTcast</option></select><span class="provider-protocol-pill" id="provider-protocol-pill">ICECAST</span></div>
+                <p class="field-hint" id="provider-help">Usa el servidor, puerto, mountpoint y contraseña que aparecen en Broadcast Settings de Zeno.fm.</p>
               </div>
+              <div class="field"><label for="input-servidor">Dirección del servidor (host)</label><div class="field-with-actions"><input type="text" id="input-servidor" value="link.zeno.fm" /><button type="button" class="field-action" data-copy-target="input-servidor" title="Copiar servidor">Copiar</button></div></div>
+              <div class="field"><label for="input-puerto">Puerto</label><input type="text" id="input-puerto" value="80" inputmode="numeric" /></div>
+              <div class="field field-full" id="field-mount"><label for="input-punto" id="label-punto">Punto de montaje (mountpoint)</label><div class="field-with-actions"><input type="text" id="input-punto" value="" placeholder="Copiar exactamente desde el panel de Zeno.fm" /><button type="button" class="field-action" data-copy-target="input-punto" title="Copiar mountpoint">Copiar</button></div></div>
+              <div class="field field-full" id="field-stream-id" hidden><label for="input-stream-id">Stream ID de SHOUTcast</label><div class="field-with-actions"><input type="text" id="input-stream-id" value="" placeholder="Ej. 1" inputmode="numeric" /><button type="button" class="field-action" data-copy-target="input-stream-id" title="Copiar Stream ID">Copiar</button></div><p class="field-hint">En SHOUTcast v2 suele ser un número indicado en Live Source Connections.</p></div>
+              <div class="field"><label for="input-usuario" id="label-usuario">Nombre de usuario</label><input type="text" id="input-usuario" value="source" /></div>
+              <div class="field"><label for="input-password">Contraseña de fuente</label><div class="field-with-actions"><input type="password" id="input-password" value="" autocomplete="off" /><button type="button" class="field-action" id="btn-toggle-password" aria-label="Mostrar contraseña">Mostrar</button><button type="button" class="field-action" data-copy-target="input-password" title="Copiar contraseña">Copiar</button></div></div>
+              <div class="field field-full"><div class="provider-validation" id="provider-validation" role="status" aria-live="polite"><span class="provider-validation-dot"></span><span id="provider-validation-text">Completa los datos de conexión para validar.</span></div></div>
             </div>
           </div>
 
-          <h3 class="section-subtitle">Musica de Transicion Activa</h3>
-          <p class="view-subtitle">Elige, de tu biblioteca, que pista usar en la proxima transmision.</p>
+          <div class="settings-section"><div class="settings-section-heading"><span class="settings-section-number">02</span><div><h3>Entrada de audio</h3><p>Selecciona y prueba el micrófono o consola.</p></div></div>
+            <div class="config-grid"><div class="field field-full"><label for="select-device">Dispositivo de entrada</label><select id="select-device"><option value="">Cargando dispositivos...</option></select><div class="mic-test-row"><button type="button" class="btn-secondary" id="btn-test-mic"><span class="icon-inline" data-icon="volume"></span> Probar micrófono</button><div class="mic-test-meter" id="mic-test-meter"></div><span class="mono-value" id="mic-test-db"></span></div></div></div>
+          </div>
 
-          <div class="config-grid">
-            <div class="field">
-              <label class="checkbox-label">
-                <input type="checkbox" id="check-intro" checked />
-                Reproducir intro al iniciar
-              </label>
-              <div class="track-picker" id="picker-intro">
-                <button type="button" class="track-picker-trigger" id="picker-intro-trigger" disabled>
-                  <span class="track-picker-trigger-text">Sin pistas en la biblioteca</span>
-                  <span class="track-picker-trigger-duration mono-value"></span>
-                  <span class="track-picker-trigger-icon" data-icon="chevronRight"></span>
-                </button>
-                <div class="track-picker-menu" id="picker-intro-menu" hidden></div>
-              </div>
-            </div>
+          <div class="settings-section"><div class="settings-section-heading"><span class="settings-section-number">03</span><div><h3>Transiciones activas</h3><p>Elige las pistas que acompañarán el inicio y cierre de cada sesión.</p></div></div>
+            <div class="config-grid"><div class="field"><label class="checkbox-label"><input type="checkbox" id="check-intro" checked /> Reproducir intro al iniciar</label><div class="track-picker" id="picker-intro"><button type="button" class="track-picker-trigger" id="picker-intro-trigger" disabled><span class="track-picker-trigger-text">Sin pistas en la biblioteca</span><span class="track-picker-trigger-duration mono-value"></span><span class="track-picker-trigger-icon" data-icon="chevronRight"></span></button><div class="track-picker-menu" id="picker-intro-menu" hidden></div></div></div><div class="field"><label class="checkbox-label"><input type="checkbox" id="check-outro" checked /> Reproducir outro al detener</label><div class="track-picker" id="picker-outro"><button type="button" class="track-picker-trigger" id="picker-outro-trigger" disabled><span class="track-picker-trigger-text">Sin pistas en la biblioteca</span><span class="track-picker-trigger-duration mono-value"></span><span class="track-picker-trigger-icon" data-icon="chevronRight"></span></button><div class="track-picker-menu" id="picker-outro-menu" hidden></div></div></div></div>
+          </div>
 
-            <div class="field">
-              <label class="checkbox-label">
-                <input type="checkbox" id="check-outro" checked />
-                Reproducir outro al detener
-              </label>
-              <div class="track-picker" id="picker-outro">
-                <button type="button" class="track-picker-trigger" id="picker-outro-trigger" disabled>
-                  <span class="track-picker-trigger-text">Sin pistas en la biblioteca</span>
-                  <span class="track-picker-trigger-duration mono-value"></span>
-                  <span class="track-picker-trigger-icon" data-icon="chevronRight"></span>
-                </button>
-                <div class="track-picker-menu" id="picker-outro-menu" hidden></div>
-              </div>
-            </div>
+          <div class="settings-section"><div class="settings-section-heading"><span class="settings-section-number">04</span><div><h3>Programación automática</h3><p>Programa una ventana de emisión mientras la app permanece abierta.</p></div></div>
+            <div class="config-grid"><div class="field field-full"><label class="checkbox-label"><input type="checkbox" id="check-schedule-enabled" /> Activar programación automática</label></div><div class="field"><label for="schedule-start">Hora de inicio</label><input type="time" id="schedule-start" value="07:00" /></div><div class="field"><label for="schedule-stop">Hora de fin</label><input type="time" id="schedule-stop" value="09:00" /></div><div class="field field-full"><label>Días de emisión</label><div class="day-picker" id="day-picker"></div></div><div class="field field-full"><label class="checkbox-label"><input type="checkbox" id="check-schedule-record" /> Grabar automáticamente las transmisiones programadas</label></div></div>
           </div>
         </section>
 
-        <!-- ---------- VISTA: INFORMACION ---------- -->
+        <!-- ---------- VISTA: INFORMACIÓN ---------- -->
         <section class="view" data-view-panel="about">
-          <h2 class="view-title">Informacion de la App</h2>
+          <span class="view-kicker">SISTEMA / STREAM RADIO</span>
+          <h2 class="view-title">Información de la aplicación</h2>
+          <div class="panel about-panel"><div class="about-mark">SR</div><div class="about-text"><h3 id="about-name">Stream Radio</h3><p class="mono-value" id="about-version">Versión 1.0.0</p><p class="about-desc">Aplicación de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast, desarrollada para UNIR Radio. Incluye biblioteca de pistas, monitorización en tiempo real, grabación y actualizaciones automáticas.</p><p class="about-desc">Repositorio: <span class="mono-value">github.com/jhersara/Stream-Unirradio</span></p></div></div>
 
-          <div class="panel about-panel">
-            <div class="about-mark">UR</div>
-            <div class="about-text">
-              <h3 id="about-name">Stream UNIR Radio</h3>
-              <p class="mono-value" id="about-version">Version 0.1.0</p>
-              <p class="about-desc">
-                Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast,
-                desarrollada para UNIR Radio. Incluye biblioteca de pistas de transicion,
-                vumetro en tiempo real y actualizaciones automaticas.
-              </p>
-              <p class="about-desc">
-                Repositorio: <span class="mono-value">github.com/jhersara/Stream-Unirradio</span>
-              </p>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <span class="panel-header-title"><span class="icon-inline" data-icon="refresh"></span> Actualizaciones</span>
-            </div>
-            <p class="about-desc">
-              La app revisa sola si hay una version nueva publicada en GitHub cada vez que
-              arranca, y la instala al cerrar. Tambien puedes revisar manualmente aqui:
-            </p>
-            <div class="button-row button-row-single">
-              <button type="button" class="btn-secondary" id="btn-check-updates">
-                <span class="icon-inline" data-icon="refresh"></span> Buscar actualizaciones
-              </button>
-            </div>
-            <p class="mono-value about-update-status" id="update-status"></p>
-          </div>
+          <div class="panel update-panel"><div class="panel-header update-panel-header"><span class="panel-header-title"><span class="icon-inline" data-icon="refresh"></span> Actualizaciones</span><span class="update-state-pill" id="update-state-pill">AL DÍA</span></div><p class="about-desc">La aplicación revisa si existe una nueva versión publicada en GitHub. Mientras se descarga puedes seguir trabajando; cuando termine, reinicia para instalarla.</p><div class="update-actions"><button type="button" class="btn-secondary" id="btn-check-updates"><span class="icon-inline" data-icon="refresh"></span> Buscar actualizaciones</button><button type="button" class="btn-primary" id="btn-restart-update" hidden><span class="icon-inline" data-icon="refresh"></span> Reiniciar para instalar</button></div><p class="mono-value about-update-status" id="update-status" aria-live="polite"></p><div class="update-progress" id="update-progress" hidden><div class="update-progress-top"><span>Descarga en curso</span><span class="mono-value" id="update-progress-label">0%</span></div><div class="progress-track"><div class="progress-fill" id="update-progress-fill"></div></div><span class="update-progress-meta" id="update-progress-meta">Preparando descarga…</span></div></div>
         </section>
-
       </main>
     </div>
 
-    <!-- ==================== STATUS BAR ==================== -->
-    <footer class="status-bar" id="status-bar">
-      <div class="status-bar-group">
-        <span class="status-bar-item status-bar-live">
-          <span class="statusbar-dot" id="statusbar-dot"></span>
-          <span id="statusbar-text">Desconectado</span>
-        </span>
-      </div>
-      <div class="status-bar-group">
-        <span class="status-bar-item status-bar-item-gain" id="statusbar-gain">Ganancia 100%</span>
-        <span class="status-bar-item status-bar-mono" id="statusbar-timer">00:00:00</span>
-        <span class="status-bar-item status-bar-item-version" id="statusbar-version">v0.1.0</span>
-        <button type="button" class="btn-icon-only" id="btn-toggle-compact" title="Modo mini-ventana">
-          <span data-icon="compact"></span>
-        </button>
-      </div>
-    </footer>
-
+    <!-- ==================== BARRA DE ESTADO ==================== -->
+    <footer class="status-bar" id="status-bar"><div class="status-bar-group"><span class="status-bar-item status-bar-live"><span class="statusbar-dot" id="statusbar-dot"></span><span id="statusbar-text">Desconectado</span></span></div><div class="status-bar-group"><span class="status-bar-item status-bar-item-gain" id="statusbar-gain">Ganancia 100%</span><span class="status-bar-item status-bar-mono" id="statusbar-timer">00:00:00</span><span class="status-bar-item status-bar-item-version" id="statusbar-version">v1.0.0</span><button type="button" class="btn-icon-only" id="btn-toggle-compact" title="Modo mini-ventana"><span data-icon="compact"></span></button></div></footer>
   </div>
 
-  <!-- ==================== BARRA COMPACTA (modo mini-ventana) ====================
-       Se muestra en lugar de toda la app cuando se activa el modo
-       mini-ventana flotante (siempre-encima, tamaño reducido). -->
-  <div class="compact-bar" id="compact-bar" hidden>
-    <span class="onair-dot" id="compact-dot"></span>
-    <div class="compact-labels">
-      <span class="compact-status" id="compact-status">Desconectado</span>
-      <span class="compact-timer" id="compact-timer">00:00:00</span>
-    </div>
-    <button type="button" class="btn-icon-only" id="btn-compact-stop" title="Detener">
-      <span data-icon="stop"></span>
-    </button>
-    <button type="button" class="btn-icon-only" id="btn-compact-restore" title="Restaurar ventana">
-      <span data-icon="expand"></span>
-    </button>
-  </div>
+  <!-- ==================== BARRA COMPACTA ==================== -->
+  <div class="compact-bar" id="compact-bar" hidden><span class="onair-dot" id="compact-dot"></span><div class="compact-labels"><span class="compact-status" id="compact-status">Desconectado</span><span class="compact-timer" id="compact-timer">00:00:00</span></div><button type="button" class="btn-icon-only" id="btn-compact-stop" title="Detener"><span data-icon="stop"></span></button><button type="button" class="btn-icon-only" id="btn-compact-restore" title="Restaurar ventana"><span data-icon="expand"></span></button></div>
 
-  <!-- ==================== MODAL GENERICO ====================
-       Reutilizado para: confirmar grabacion al iniciar, aviso de
-       actualizacion disponible, aviso de actualizacion lista. -->
-  <div class="modal-overlay" id="app-modal-overlay" hidden>
-    <div class="modal-card">
-      <h3 class="modal-title" id="app-modal-title"></h3>
-      <p class="modal-message" id="app-modal-message"></p>
-      <div class="modal-actions" id="app-modal-actions"></div>
-    </div>
-  </div>
+  <!-- ==================== MODAL ==================== -->
+  <div class="modal-overlay" id="app-modal-overlay" hidden><div class="modal-card"><span class="modal-kicker">STREAM RADIO</span><h3 class="modal-title" id="app-modal-title"></h3><p class="modal-message" id="app-modal-message"></p><div class="modal-actions" id="app-modal-actions"></div></div></div>
 
   <script src="icons.js"></script>
   <script src="sound-fx.js"></script>

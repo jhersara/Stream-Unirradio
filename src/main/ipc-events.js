@@ -17,8 +17,17 @@ function sendStatus(mainWindow, kind, elapsedSeconds) {
   send(mainWindow, 'stream:status', { kind, elapsedSeconds });
 }
 
-function sendVuLevel(mainWindow, peak, db) {
-  send(mainWindow, 'stream:vu-level', { peak, db });
+function sendVuLevel(mainWindow, peak, db, metrics = {}) {
+  send(mainWindow, 'stream:vu-level', {
+    peak,
+    db,
+    peakDb: metrics.peakDb ?? db,
+    rms: metrics.rms ?? 0,
+    rmsDb: metrics.rmsDb ?? -100,
+    leftDb: metrics.leftDb ?? db,
+    rightDb: metrics.rightDb ?? db,
+    clip: Boolean(metrics.clip)
+  });
 }
 
 function sendPreviewVuLevel(mainWindow, peak, db) {
@@ -29,6 +38,10 @@ function sendSpectrum(mainWindow, bands) {
   send(mainWindow, 'stream:spectrum', { bands });
 }
 
+function sendDeadAir(mainWindow, active) {
+  send(mainWindow, 'stream:dead-air', { active });
+}
+
 function sendIntroProgress(mainWindow, payload) {
   send(mainWindow, 'stream:intro-progress', payload);
 }
@@ -37,9 +50,21 @@ function sendOutroProgress(mainWindow, payload) {
   send(mainWindow, 'stream:outro-progress', payload);
 }
 
-/** payload: { state: 'checking'|'available'|'not-available'|'downloaded'|'error', version } */
+/** payload: { state: 'checking'|'available'|'downloading'|'not-available'|'downloaded'|'error', version, percent, transferred, total, bytesPerSecond } */
 function sendUpdateState(mainWindow, payload) {
   send(mainWindow, 'app:update-state', payload);
+}
+
+function sendPodcastExportProgress(mainWindow, payload) {
+  send(mainWindow, 'podcast:export-progress', payload);
+}
+
+function sendPodcastRecordingState(mainWindow, payload) {
+  send(mainWindow, 'podcast:recording-state', payload);
+}
+
+function sendPodcastRecordingLevel(mainWindow, payload) {
+  send(mainWindow, 'podcast:recording-level', payload);
 }
 
 module.exports = {
@@ -48,7 +73,11 @@ module.exports = {
   sendVuLevel,
   sendPreviewVuLevel,
   sendSpectrum,
+  sendDeadAir,
   sendIntroProgress,
   sendOutroProgress,
-  sendUpdateState
+  sendUpdateState,
+  sendPodcastExportProgress,
+  sendPodcastRecordingState,
+  sendPodcastRecordingLevel
 };
