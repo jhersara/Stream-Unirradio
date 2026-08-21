@@ -1,6 +1,6 @@
 # Historial de cambios
 
-## [Unreleased] — Estabilidad y rendimiento
+## [1.3.1] — Estabilidad y rendimiento
 
 ### Preescucha y consumo de memoria
 
