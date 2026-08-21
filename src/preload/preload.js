@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('streamAPI', {
 
   // Actualizaciones (boton manual + popup/insignia en la barra lateral)
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  getUpdateState: () => ipcRenderer.invoke('updates:state'),
   restartToUpdate: () => ipcRenderer.invoke('updates:restart'),
 
   // Historial de transmisiones

@@ -220,6 +220,8 @@ function registerIpcHandlers(mainWindow) {
     return { ok: true };
   });
 
+  ipcMain.handle('updates:state', async () => autoUpdaterModule.getLastUpdateState());
+
   ipcMain.handle('updates:restart', async () => {
     autoUpdaterModule.restartToUpdate();
     return { ok: true };

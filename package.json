@@ -1,8 +1,8 @@
 {
   "name": "stream-unirradio",
   "productName": "Stream Radio",
-  "version": "1.1.0",
-  "description": "Aplicacion de escritorio para transmitir audio en vivo hacia Zeno.fm / Icecast",
+  "version": "1.2.0",
+  "description": "Aplicación de escritorio para transmitir radio en vivo hacia Zeno.fm y Centova Cast mediante Icecast o SHOUTcast",
   "main": "src/main/main.js",
   "author": "UNIR Radio",
   "license": "UNLICENSED",

@@ -1032,10 +1032,17 @@ els.btnRestartUpdate.addEventListener('click', () => {
   window.streamAPI.restartToUpdate();
 });
 
-window.streamAPI.onUpdateState((payload) => {
+function handleUpdateState(payload) {
+  if (!payload || !payload.state) return;
   if (payload.state === 'checking') {
+    latestUpdateInfo = payload;
     updateStatePill('checking', 'COMPROBANDO');
     els.updateStatus.textContent = 'Comprobando actualizaciones…';
+    els.updateProgress.hidden = false;
+    els.updateProgressFill.style.width = '0%';
+    els.updateProgressLabel.textContent = '0%';
+    els.updateProgressMeta.textContent = 'Consultando GitHub…';
+    els.btnRestartUpdate.hidden = true;
   } else if (payload.state === 'available') {
     latestUpdateInfo = payload;
     updateStatePill('available', 'DESCARGANDO');
@@ -1046,9 +1053,9 @@ window.streamAPI.onUpdateState((payload) => {
     els.updateProgressMeta.textContent = 'Preparando descarga…';
     els.btnRestartUpdate.hidden = true;
     showUpdateBadge(`Descargando actualización v${payload.version}`);
-    openUpdateModal();
   } else if (payload.state === 'downloading') {
-    const pct = Math.round(payload.percent || 0);
+    latestUpdateInfo = payload;
+    const pct = Math.min(100, Math.max(0, Math.round(payload.percent || 0)));
     updateStatePill('downloading', `DESCARGANDO ${pct}%`);
     els.updateProgress.hidden = false;
     els.updateProgressFill.style.width = `${pct}%`;
@@ -1060,7 +1067,12 @@ window.streamAPI.onUpdateState((payload) => {
   } else if (payload.state === 'downloaded') {
     latestUpdateInfo = payload;
     updateStatePill('downloaded', 'LISTA PARA INSTALAR');
-    els.updateProgress.hidden = true;
+    // Mantener la barra visible al 100%: el usuario debe ver que la descarga
+    // terminó, no solo recibir el mensaje final de "descargado".
+    els.updateProgress.hidden = false;
+    els.updateProgressFill.style.width = '100%';
+    els.updateProgressLabel.textContent = '100%';
+    els.updateProgressMeta.textContent = 'Descarga completada · lista para instalar';
     els.updateStatus.textContent = `La versión v${payload.version} está lista. Reinicia la aplicación para instalarla.`;
     els.btnRestartUpdate.hidden = false;
     showUpdateBadge('Actualización lista · Reiniciar para instalar');
@@ -1073,12 +1085,15 @@ window.streamAPI.onUpdateState((payload) => {
     els.btnRestartUpdate.hidden = true;
     els.activityUpdateBadge.hidden = true;
   } else if (payload.state === 'error') {
+    latestUpdateInfo = payload;
     updateStatePill('error', 'ERROR');
     els.updateProgress.hidden = true;
     els.updateStatus.textContent = 'No se pudo comprobar la actualización. Revisa la conexión e inténtalo de nuevo.';
     els.btnRestartUpdate.hidden = true;
   }
-});
+}
+
+window.streamAPI.onUpdateState(handleUpdateState);
 
 els.activityUpdateBadge.addEventListener('click', () => {
   window.SoundFX.click();
@@ -1809,9 +1824,12 @@ function renderPodcastTimeline() {
     item.innerHTML = `
       <div class="timeline-clip-head"><span class="timeline-clip-grip" title="Arrastrar para reordenar">⋮⋮</span><span class="timeline-clip-index">${String(index + 1).padStart(2, '0')}</span><span class="timeline-clip-info"><strong>${escapeHtml(title)}</strong><small>${formatShort(clipDuration)} · ${segment.type === 'recording' ? 'Grabación de voz' : 'Biblioteca'}</small></span><span class="timeline-clip-actions"><button type="button" class="timeline-preview" data-preview-segment="${index}" title="Previsualizar clip">${window.renderIcon('play', 13)}</button><button type="button" data-move-up="${index}" title="Subir clip"${index === 0 ? ' disabled' : ''}>↑</button><button type="button" data-move-down="${index}" title="Bajar clip"${index === segments.length - 1 ? ' disabled' : ''}>↓</button><button type="button" class="timeline-remove" data-remove-clip="${index}" title="Quitar clip">×</button></span></div>
       <div class="timeline-waveform" data-waveform-id="${escapeHtml(segment.id)}"><span class="waveform-placeholder">Generando forma de onda…</span></div>
-      <div class="timeline-trim-controls"><label>IN <input type="range" min="0" max="${maxDuration}" step="0.1" value="${start}" data-trim-start="${index}" aria-label="Inicio de ${escapeHtml(title)}" /></label><label>OUT <input type="range" min="0" max="${maxDuration}" step="0.1" value="${end}" data-trim-end="${index}" aria-label="Final de ${escapeHtml(title)}" /></label><span class="timeline-trim-summary" data-trim-summary="${index}">${formatShort(start)} — ${formatShort(end)}</span></div>
-      <div class="timeline-mix-controls"><label class="timeline-position-picker">POS <input type="number" min="0" max="86400" step="0.1" value="${startTime.toFixed(1)}" data-start-index="${index}" aria-label="Posición de ${escapeHtml(title)}" /></label><label class="timeline-track-picker">PISTA <select data-track-index="${index}" aria-label="Pista de ${escapeHtml(title)}"><option value="voice"${segment.track === 'voice' ? ' selected' : ''}>Voz</option><option value="music"${segment.track === 'music' ? ' selected' : ''}>Música</option><option value="identity"${segment.track === 'identity' ? ' selected' : ''}>Identidad</option></select></label><label>VOL <input type="range" min="0" max="2" step="0.05" value="${Number.isFinite(Number(segment.volume)) ? Number(segment.volume) : 1}" data-volume-index="${index}" aria-label="Volumen de ${escapeHtml(title)}" /><output data-volume-output="${index}">${Math.round((Number.isFinite(Number(segment.volume)) ? Number(segment.volume) : 1) * 100)}%</output></label><label>FADE IN <input type="number" min="0" max="30" step="0.1" value="${Number(segment.fadeIn) || 0}" data-fade-in-index="${index}" /></label><label>FADE OUT <input type="number" min="0" max="30" step="0.1" value="${Number(segment.fadeOut) || 0}" data-fade-out-index="${index}" /></label></div>
-      ${renderAutomationControls(segment, index, clipDuration)}
+      <details class="timeline-clip-advanced">
+        <summary><span>Ajustes del clip</span><small>Recorte · posición · mezcla · fades</small><span class="advanced-chevron">⌄</span></summary>
+        <div class="timeline-trim-controls"><label>IN <input type="range" min="0" max="${maxDuration}" step="0.1" value="${start}" data-trim-start="${index}" aria-label="Inicio de ${escapeHtml(title)}" /></label><label>OUT <input type="range" min="0" max="${maxDuration}" step="0.1" value="${end}" data-trim-end="${index}" aria-label="Final de ${escapeHtml(title)}" /></label><span class="timeline-trim-summary" data-trim-summary="${index}">${formatShort(start)} — ${formatShort(end)}</span></div>
+        <div class="timeline-mix-controls"><label class="timeline-position-picker">POS <input type="number" min="0" max="86400" step="0.1" value="${startTime.toFixed(1)}" data-start-index="${index}" aria-label="Posición de ${escapeHtml(title)}" /></label><label class="timeline-track-picker">PISTA <select data-track-index="${index}" aria-label="Pista de ${escapeHtml(title)}"><option value="voice"${segment.track === 'voice' ? ' selected' : ''}>Voz</option><option value="music"${segment.track === 'music' ? ' selected' : ''}>Música</option><option value="identity"${segment.track === 'identity' ? ' selected' : ''}>Identidad</option></select></label><label>VOL <input type="range" min="0" max="2" step="0.05" value="${Number.isFinite(Number(segment.volume)) ? Number(segment.volume) : 1}" data-volume-index="${index}" aria-label="Volumen de ${escapeHtml(title)}" /><output data-volume-output="${index}">${Math.round((Number.isFinite(Number(segment.volume)) ? Number(segment.volume) : 1) * 100)}%</output></label><label>FADE IN <input type="number" min="0" max="30" step="0.1" value="${Number(segment.fadeIn) || 0}" data-fade-in-index="${index}" /></label><label>FADE OUT <input type="number" min="0" max="30" step="0.1" value="${Number(segment.fadeOut) || 0}" data-fade-out-index="${index}" /></label></div>
+        ${renderAutomationControls(segment, index, clipDuration)}
+      </details>
     `;
     els.podcastTimeline.appendChild(item);
   });
@@ -2317,6 +2335,14 @@ async function bootstrap() {
   const schedule = await window.streamAPI.loadSchedule();
   applySchedule(schedule);
   await loadAppInfo();
+  try {
+    const cachedUpdateState = await window.streamAPI.getUpdateState();
+    if (cachedUpdateState && cachedUpdateState.state && cachedUpdateState.state !== 'idle') {
+      handleUpdateState(cachedUpdateState);
+    }
+  } catch {
+    appendLog('Aviso: no se pudo recuperar el estado del actualizador.');
+  }
   appendLog('Interfaz cargada.');
 }
 

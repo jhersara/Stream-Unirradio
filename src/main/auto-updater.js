@@ -2,6 +2,17 @@ const { app } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { sendLog, sendUpdateState } = require('./ipc-events');
 
+let lastUpdateState = { state: 'idle' };
+
+function publishUpdateState(mainWindow, payload) {
+  lastUpdateState = { ...payload, updatedAt: Date.now() };
+  sendUpdateState(mainWindow, payload);
+}
+
+function getLastUpdateState() {
+  return { ...lastUpdateState };
+}
+
 /**
  * Configura electron-updater contra los Releases de GitHub definidos en
  * package.json -> build.publish (owner: jhersara, repo: Stream-Unirradio).
@@ -25,17 +36,17 @@ function initAutoUpdater(mainWindow) {
   autoUpdater.on('checking-for-update', () => {
     console.log('[auto-updater] Buscando actualizaciones...');
     sendLog(mainWindow, 'Buscando actualizaciones...');
-    sendUpdateState(mainWindow, { state: 'checking' });
+      publishUpdateState(mainWindow, { state: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
     console.log('[auto-updater] Actualizacion disponible:', info.version);
     sendLog(mainWindow, `Actualizacion disponible: v${info.version}. Descargando en segundo plano...`);
-    sendUpdateState(mainWindow, { state: 'available', version: info.version });
+    publishUpdateState(mainWindow, { state: 'available', version: info.version });
   });
 
   autoUpdater.on('download-progress', (progress) => {
-    sendUpdateState(mainWindow, {
+    publishUpdateState(mainWindow, {
       state: 'downloading',
       percent: progress.percent,
       transferred: progress.transferred,
@@ -47,20 +58,20 @@ function initAutoUpdater(mainWindow) {
   autoUpdater.on('update-not-available', () => {
     console.log('[auto-updater] No hay actualizaciones disponibles.');
     sendLog(mainWindow, `Ya tienes la ultima version instalada (v${app.getVersion()}).`);
-    sendUpdateState(mainWindow, { state: 'not-available' });
+    publishUpdateState(mainWindow, { state: 'not-available' });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[auto-updater] Actualizacion descargada, se instalara al cerrar la app:', info.version);
     sendLog(mainWindow, `Actualizacion v${info.version} descargada. Lista para instalar.`);
-    sendUpdateState(mainWindow, { state: 'downloaded', version: info.version });
+    publishUpdateState(mainWindow, { state: 'downloaded', version: info.version, total: info.files?.[0]?.size || 0 });
   });
 
   autoUpdater.on('error', (err) => {
     const message = err ? (err.message || err.stack || err.toString()) : 'desconocido';
     console.error('[auto-updater] Error verificando actualizaciones:', message);
     sendLog(mainWindow, `Actualización: ${message}`);
-    sendUpdateState(mainWindow, { state: 'error', message });
+    publishUpdateState(mainWindow, { state: 'error', message });
   });
 
   if (app.isPackaged) {
@@ -82,7 +93,7 @@ function checkNow(mainWindow) {
     const message = err && (err.message || err.toString()) ? (err.message || err.toString()) : 'Error desconocido';
     console.error('[auto-updater] No se pudo verificar actualizaciones:', err);
     sendLog(mainWindow, `No se pudo verificar actualizaciones: ${message}`);
-    sendUpdateState(mainWindow, { state: 'error', message });
+    publishUpdateState(mainWindow, { state: 'error', message });
   });
 }
 
@@ -95,4 +106,4 @@ function restartToUpdate() {
   autoUpdater.quitAndInstall();
 }
 
-module.exports = { initAutoUpdater, checkNow, restartToUpdate };
+module.exports = { initAutoUpdater, checkNow, restartToUpdate, getLastUpdateState };

@@ -185,6 +185,14 @@
             <button type="button" class="btn-primary" id="btn-new-episode"><span class="icon-inline" data-icon="plus"></span> Nuevo episodio</button>
           </div>
 
+          <div class="podcast-flow-guide" aria-label="Flujo recomendado para crear un episodio">
+            <div class="podcast-flow-step is-active"><span>01</span><div><strong>Graba o añade clips</strong><small>Usa tu voz o la Biblioteca</small></div></div>
+            <div class="podcast-flow-line"></div>
+            <div class="podcast-flow-step"><span>02</span><div><strong>Ordena la historia</strong><small>Arrastra los clips en la línea de tiempo</small></div></div>
+            <div class="podcast-flow-line"></div>
+            <div class="podcast-flow-step"><span>03</span><div><strong>Guarda y exporta</strong><small>Obtén tu MP3 listo para publicar</small></div></div>
+          </div>
+
           <div class="podcast-layout">
             <aside class="podcast-episodes-panel">
               <div class="podcast-panel-heading"><span class="panel-header-title">Tus episodios</span><span class="mono-value" id="episode-count">0</span></div>
@@ -204,19 +212,22 @@
                 <p class="recording-help" id="recording-help">Selecciona un dispositivo de entrada en Configuración antes de grabar.</p>
               </div>
 
-              <div class="mix-monitor-panel">
-                <div class="mix-monitor-heading"><div><span class="view-kicker">MEZCLA / MONITORIZACIÓN</span><h4>Buses y ducking</h4><p>Reduce la música automáticamente cuando la voz supera el umbral definido.</p></div><button type="button" class="btn-secondary" id="btn-measure-mix">Medir mezcla</button></div>
-                <div class="mix-control-row"><label class="mix-toggle"><input type="checkbox" id="mix-ducking-enabled" checked /><span>DUCKING DE MÚSICA</span></label><label>REDUCCIÓN <input type="range" min="0" max="1" step="0.05" value="0.35" id="mix-duck-amount" /><output id="mix-duck-amount-output">35%</output></label><label>UMBRAL <input type="range" min="-60" max="0" step="1" value="-32" id="mix-duck-threshold" /><output id="mix-duck-threshold-output">-32 dB</output></label></div>
-                <div class="bus-meter-grid">
-                  <div class="bus-meter-card"><div><span class="bus-name bus-voice">VOZ</span><span class="bus-segment-count" id="mix-segments-voice">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-voice">-inf</strong></span><span>LUFS <strong id="mix-lufs-voice">-inf</strong></span><span>PEAK <strong id="mix-peak-voice">-inf</strong></span></div></div>
-                  <div class="bus-meter-card"><div><span class="bus-name bus-music">MÚSICA</span><span class="bus-segment-count" id="mix-segments-music">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-music">-inf</strong></span><span>LUFS <strong id="mix-lufs-music">-inf</strong></span><span>PEAK <strong id="mix-peak-music">-inf</strong></span></div></div>
-                  <div class="bus-meter-card"><div><span class="bus-name bus-identity">IDENTIDAD</span><span class="bus-segment-count" id="mix-segments-identity">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-identity">-inf</strong></span><span>LUFS <strong id="mix-lufs-identity">-inf</strong></span><span>PEAK <strong id="mix-peak-identity">-inf</strong></span></div></div>
+              <details class="podcast-advanced-panel">
+                <summary><span><span class="view-kicker">OPCIONAL</span><strong>Mezcla automática y medición</strong></span><span class="advanced-summary-hint">Ducking · RMS · LUFS <span class="advanced-chevron">⌄</span></span></summary>
+                <div class="mix-monitor-panel">
+                  <div class="mix-monitor-heading"><div><span class="view-kicker">MEZCLA / MONITORIZACIÓN</span><h4>Buses y ducking</h4><p>Reduce la música automáticamente cuando la voz supera el umbral definido.</p></div><button type="button" class="btn-secondary" id="btn-measure-mix">Medir mezcla</button></div>
+                  <div class="mix-control-row"><label class="mix-toggle"><input type="checkbox" id="mix-ducking-enabled" checked /><span>DUCKING DE MÚSICA</span></label><label>REDUCCIÓN <input type="range" min="0" max="1" step="0.05" value="0.35" id="mix-duck-amount" /><output id="mix-duck-amount-output">35%</output></label><label>UMBRAL <input type="range" min="-60" max="0" step="1" value="-32" id="mix-duck-threshold" /><output id="mix-duck-threshold-output">-32 dB</output></label></div>
+                  <div class="bus-meter-grid">
+                    <div class="bus-meter-card"><div><span class="bus-name bus-voice">VOZ</span><span class="bus-segment-count" id="mix-segments-voice">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-voice">-inf</strong></span><span>LUFS <strong id="mix-lufs-voice">-inf</strong></span><span>PEAK <strong id="mix-peak-voice">-inf</strong></span></div></div>
+                    <div class="bus-meter-card"><div><span class="bus-name bus-music">MÚSICA</span><span class="bus-segment-count" id="mix-segments-music">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-music">-inf</strong></span><span>LUFS <strong id="mix-lufs-music">-inf</strong></span><span>PEAK <strong id="mix-peak-music">-inf</strong></span></div></div>
+                    <div class="bus-meter-card"><div><span class="bus-name bus-identity">IDENTIDAD</span><span class="bus-segment-count" id="mix-segments-identity">0 clips</span></div><div class="bus-meter-values"><span>RMS <strong id="mix-rms-identity">-inf</strong></span><span>LUFS <strong id="mix-lufs-identity">-inf</strong></span><span>PEAK <strong id="mix-peak-identity">-inf</strong></span></div></div>
+                  </div>
                 </div>
-              </div>
+              </details>
 
-              <div class="podcast-timeline-section"><div class="podcast-section-heading"><div><span class="view-kicker">LÍNEA DE TIEMPO</span><h4>Orden del episodio</h4></div><span class="mono-value" id="timeline-duration">00:00</span></div><div class="podcast-timeline" id="podcast-timeline"><div class="timeline-empty">Añade clips desde la biblioteca para comenzar.</div></div><div class="timeline-actions"><span class="timeline-hint">Arrastra los clips para cambiar el orden.</span><button type="button" class="btn-secondary" id="btn-clear-timeline">Limpiar línea de tiempo</button></div></div>
+              <div class="podcast-timeline-section"><div class="podcast-section-heading"><div><span class="view-kicker">PASO 02 / LÍNEA DE TIEMPO</span><h4>Ordena tus clips</h4></div><span class="mono-value" id="timeline-duration">00:00</span></div><div class="podcast-timeline" id="podcast-timeline"><div class="timeline-empty">Añade clips desde la biblioteca para comenzar.</div></div><div class="timeline-actions"><span class="timeline-hint">Arrastra los clips para cambiar el orden.</span><button type="button" class="btn-secondary" id="btn-clear-timeline">Limpiar línea de tiempo</button></div></div>
 
-              <div class="podcast-clips-section"><div class="podcast-section-heading"><div><span class="view-kicker">RECURSOS</span><h4>Añadir un clip</h4></div><span class="mono-value">BIBLIOTECA</span></div><div class="podcast-clip-library" id="podcast-clip-library"><p class="track-list-empty">Importa pistas en Biblioteca para usarlas aquí.</p></div></div>
+              <div class="podcast-clips-section"><div class="podcast-section-heading"><div><span class="view-kicker">PASO 01 / RECURSOS</span><h4>Añade un clip</h4></div><span class="mono-value">BIBLIOTECA</span></div><div class="podcast-clip-library" id="podcast-clip-library"><p class="track-list-empty">Importa pistas en Biblioteca para usarlas aquí.</p></div></div>
 
               <div class="podcast-editor-actions"><button type="button" class="btn-danger" id="btn-delete-episode"><span class="icon-inline" data-icon="trash"></span> Eliminar borrador</button><div><button type="button" class="btn-secondary" id="btn-save-episode"><span class="icon-inline" data-icon="check"></span> Guardar cambios</button><button type="button" class="btn-primary" id="btn-export-episode"><span class="icon-inline" data-icon="upload"></span> Exportar MP3</button></div></div>
               <div class="podcast-export-status" id="podcast-export-status" hidden><div class="update-progress-top"><span id="podcast-export-label">Preparando exportación…</span><span class="mono-value" id="podcast-export-percent">0%</span></div><div class="progress-track"><div class="progress-fill" id="podcast-export-fill"></div></div><div class="podcast-export-footer"><span class="update-progress-meta" id="podcast-export-meta"></span><button type="button" class="btn-secondary btn-cancel-export" id="btn-cancel-export" hidden>Cancelar exportación</button></div></div>

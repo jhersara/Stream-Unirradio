@@ -93,12 +93,23 @@ function writeEncodedOutput(chunk) {
 function writeToRecorder(chunk) {
   if (!session || !session.recorderProcess) return;
   const stdin = session.recorderProcess.stdin;
-  if (!stdin || stdin.destroyed) return;
+  if (!stdin || stdin.destroyed || session.recorderBackpressured) return;
   try {
-    stdin.write(chunk);
+    const accepted = stdin.write(chunk);
+    if (!accepted) {
+      session.recorderBackpressured = true;
+      stdin.once('drain', () => {
+        if (session && session.recorderProcess?.stdin === stdin) {
+          session.recorderBackpressured = false;
+        }
+      });
+      if (!session.recorderBackpressureWarned) {
+        session.recorderBackpressureWarned = true;
+        sendLog(session.mainWindow, 'Aviso: la grabación local está procesando más lento; la transmisión en vivo no se detendrá.');
+      }
+    }
   } catch {
-    // Si la grabacion local falla no debe afectar la transmision en vivo;
-    // el evento 'error'/'close' del proceso grabador ya lo reporta aparte.
+    // La grabacion local nunca debe afectar la transmision en vivo.
   }
 }
 
@@ -135,7 +146,7 @@ async function connectSourceBridge(mainWindow, profile, config) {
 
 function buildRecorderArgs(outputPath) {
   return [
-    '-y', '-hide_banner', '-loglevel', 'warning',
+    '-y', '-hide_banner', '-loglevel', 'warning', '-threads', '1',
     '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS),
     '-i', 'pipe:0',
     '-c:a', 'libmp3lame', '-b:a', '128k',
@@ -150,6 +161,23 @@ function buildRecordingPath() {
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   return path.join(dir, `transmision-${stamp}.mp3`);
+}
+
+function startLocalRecorder(mainWindow) {
+  if (!session || !session.recordingRequested || session.stopRequested) return;
+  try {
+    const recordingPath = buildRecordingPath();
+    const recorderProcess = spawn(resolveFfmpegPath(), buildRecorderArgs(recordingPath), { windowsHide: true });
+    session.recorderProcess = recorderProcess;
+    session.recordingPath = recordingPath;
+    session.recorderBackpressured = false;
+    session.recorderBackpressureWarned = false;
+    wireRecorderProcessEvents(mainWindow, recorderProcess);
+    sendLog(mainWindow, `Grabación local iniciada: ${recordingPath}`);
+  } catch (err) {
+    sendLog(mainWindow, `Aviso: no se pudo iniciar la grabación local (${err.message}). La transmisión sigue normal.`);
+    session.recordingRequested = false;
+  }
 }
 
 /**
@@ -853,25 +881,12 @@ async function startStream(mainWindow, rawConfig) {
     introController: null,
     outroController: null,
     introPcmPromise: null,
-    outroPcmPromise: null
+    outroPcmPromise: null,
+    recordingRequested: Boolean(config.recordSession),
+    recorderBackpressured: false,
+    recorderBackpressureWarned: false
   };
   pendingStart = null;
-
-  // Grabacion local opcional (el usuario decide Si/No al darle Iniciar,
-  // ver renderer.js). Se abre un proceso ffmpeg aparte que recibe el MISMO
-  // audio (intro + vivo + outro) que va al encoder de Icecast.
-  if (config.recordSession) {
-    try {
-      const recordingPath = buildRecordingPath();
-      const recorderProcess = spawn(ffmpegPath, buildRecorderArgs(recordingPath), { windowsHide: true });
-      session.recorderProcess = recorderProcess;
-      session.recordingPath = recordingPath;
-      wireRecorderProcessEvents(mainWindow, recorderProcess);
-      sendLog(mainWindow, `Grabando esta transmision en: ${recordingPath}`);
-    } catch (err) {
-      sendLog(mainWindow, `Aviso: no se pudo iniciar la grabacion local (${err.message}). La transmision sigue normal.`);
-    }
-  }
 
   // Pre-decodificar intro/outro a PCM EN PARALELO (intro: mientras se
   // confirma la conexion; outro: durante toda la sesion), para que cuando
@@ -910,6 +925,9 @@ async function startStream(mainWindow, rawConfig) {
   sendLog(mainWindow, 'Encoder FFmpeg iniciado correctamente.');
   session.startedAt = Date.now();
   startStatusTicker();
+  // El grabador se inicia fuera del camino crítico para que Documents/FFmpeg
+  // no puedan congelar el arranque de la emisión. Si falla, el vivo continúa.
+  startLocalRecorder(mainWindow);
 
   // A partir de aqui la secuencia intro -> vivo corre en segundo plano via
   // eventos IPC; el handler de 'stream:start' ya puede devolver el control.

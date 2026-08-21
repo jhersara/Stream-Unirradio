@@ -1,5 +1,34 @@
 # Historial de cambios
 
+## [1.2.0] — Correcciones de producción y experiencia de uso
+
+### Podcast Studio
+
+- Simplificado el flujo principal en tres pasos: grabar o añadir clips, ordenar la historia y guardar/exportar.
+- Convertidas la mezcla automática, el ducking, la medición RMS/LUFS y los controles técnicos por clip en paneles avanzados plegables.
+- Conservadas las funciones de recorte IN/OUT, volumen, fades, automatización, preescucha y exportación MP3.
+
+### Auto-updater
+
+- La barra de descarga permanece visible al 100% cuando la actualización termina.
+- Añadido el estado `Descarga completada · lista para instalar` junto con el botón `Reiniciar para instalar`.
+- Añadida recuperación del último estado del actualizador si la descarga termina antes de que el renderer finalice su carga.
+
+### Transmisión y grabación local
+
+- El grabador local ya no bloquea el camino crítico de inicio de la transmisión.
+- El grabador se inicia después de confirmar que el encoder principal está preparado.
+- Añadido control de backpressure para que una grabación local lenta no detenga la emisión en vivo.
+- Limitado el grabador local a un hilo FFmpeg; si falla, la transmisión continúa.
+- Verificado el pipe PCM → FFmpeg → MP3 con una prueba de integración local.
+
+### Documentación
+
+- Reescrito el README principal con arquitectura, instalación, proveedores, flujo de transmisión, Podcast Studio, auto-updater, solución de problemas y capturas visuales.
+- Añadidas capturas públicas en `docs/screenshots/` sin credenciales ni datos privados.
+
+---
+
 ## [1.1.0] — Stream Radio
 
 ### Streaming y proveedores
