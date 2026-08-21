@@ -1,5 +1,22 @@
 # Historial de cambios
 
+## [1.3.0] — Guardado personalizado de grabaciones
+
+### Grabación local
+
+- La grabación se mantiene en un archivo temporal durante la emisión para no interrumpir el flujo en vivo.
+- Al detener la transmisión y finalizar el cierre de FFmpeg, aparece el selector nativo de Windows para definir el nombre y la carpeta de destino.
+- Se conserva `Documentos\\Stream Radio - Grabaciones` como ubicación predeterminada cuando el usuario cancela el diálogo o cuando la sesión es automática.
+- Se evita sobrescribir grabaciones existentes mediante nombres numerados y se añade `.mp3` automáticamente cuando hace falta.
+- El historial registra la ruta definitiva del archivo después de moverlo.
+- Las grabaciones programadas continúan guardándose sin interacción en la ubicación predeterminada.
+
+### Documentación
+
+- Actualizado el README con el flujo de selección de nombre y carpeta y su solución de problemas.
+
+---
+
 ## [1.2.0] — Correcciones de producción y experiencia de uso
 
 ### Podcast Studio
