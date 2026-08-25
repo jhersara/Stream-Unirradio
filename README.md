@@ -42,7 +42,7 @@ En ventanas pequeñas, la navegación lateral se transforma en un menú desplega
 | Motor de audio | Captura nativa con `naudiodon` y procesamiento con FFmpeg. |
 | Transiciones | Intro antes de abrir el micrófono y outro diferido al detener la sesión. |
 | Pausa | Pausa y reanudación manteniendo la conexión activa y enviando silencio controlado. |
-| Grabación local | Confirmación opcional al iniciar; al detener permite definir nombre y carpeta mediante un selector de guardado, con Documentos como destino predeterminado. |
+| Grabación local | Confirmación opcional al iniciar; al detener permite definir nombre y carpeta mediante un selector de guardado, con una carpeta local de la aplicación como destino predeterminado. |
 | Preescucha | Reproducción local mediante un protocolo de archivo seguro; no convierte pistas completas a base64 ni carga todo el audio en memoria. |
 | Biblioteca | Importación múltiple, almacenamiento persistente, eliminación y preescucha. |
 | Podcast Studio | Episodios, grabación de voz, clips, línea de tiempo, exportación MP3, ducking y medición opcional. |
@@ -98,11 +98,13 @@ Al pulsar **Iniciar**, Stream Radio pregunta si también se desea guardar una co
 
 La grabación local se inicia después de confirmar que el encoder principal está preparado. Su presión de escritura se controla de forma independiente para que una grabación lenta no detenga la emisión en vivo. Si el grabador local falla, la transmisión continúa y el incidente queda registrado en la actividad.
 
-Los archivos se guardan en:
+Los archivos se guardan por defecto en una carpeta local de datos de la aplicación, evitando rutas redirigidas a OneDrive que pueden tardar demasiado durante una operación de archivo:
 
 ```text
-Documentos/Stream Radio - Grabaciones/
+%APPDATA%/Stream Radio/Stream Radio - Grabaciones/
 ```
+
+El usuario puede seleccionar otra carpeta desde el formulario integrado de guardado. Las operaciones de acceso, creación, movimiento y copia tienen límites de tiempo para que una unidad lenta o una carpeta de red no congele la interfaz ni la transmisión.
 
 ## Podcast Studio
 
@@ -238,9 +240,9 @@ Las pruebas de conexión real dependen de las credenciales del servidor de radio
 | No conecta con Icecast | Verifica host, puerto, usuario, contraseña y mountpoint copiados desde el panel del proveedor. |
 | SHOUTcast rechaza la fuente | Selecciona el proveedor SHOUTcast y revisa el Stream ID cuando el panel lo requiera. |
 | La barra de actualización no aparece | Abre Información; el estado descargando debe mostrar porcentaje y la actualización terminada debe conservar la barra al 100%. |
-| La grabación local falla | Revisa la carpeta Documentos o la carpeta elegida en el selector de guardado y el log; un fallo local no debería detener la transmisión. |
+| La grabación local falla | Revisa `%APPDATA%/Stream Radio/Stream Radio - Grabaciones/` o la carpeta elegida en el selector de guardado y el log; un fallo local no debería detener la transmisión. |
 | La app se cierra al reproducir una pista | Actualiza a la versión que usa la preescucha por protocolo local; evita cargar copias antiguas de la app mientras instalas la actualización y revisa el log si el archivo fue eliminado. |
-| La app parece congelarse al terminar | Espera el estado `Selecciona el nombre y la carpeta de la grabación…`; la emisión ya terminó y el diálogo nativo de Windows puede estar delante de la ventana principal. |
+| La app parece congelarse al terminar | La emisión debe finalizar sin esperar la copia local. Si una carpeta elegida tarda demasiado, el guardado muestra un error acotado y la ventana permanece disponible para reintentar. |
 | Aviso de GPU de Chromium | Es un aviso gráfico de Electron; no implica por sí mismo un fallo de audio. |
 | Aviso final de libmp3lame | El mensaje sobre la cola de muestras puede aparecer durante el cierre del encoder y no necesariamente indica una transmisión fallida. |
 

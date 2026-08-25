@@ -161,6 +161,14 @@ const els = {
   statusbarGain: document.getElementById('statusbar-gain'),
   statusbarVersion: document.getElementById('statusbar-version'),
   recordingSaveStatus: document.getElementById('recording-save-status'),
+  recordingSaveOverlay: document.getElementById('recording-save-overlay'),
+  recordingSaveForm: document.getElementById('recording-save-form'),
+  recordingSaveName: document.getElementById('recording-save-name'),
+  recordingSaveFolder: document.getElementById('recording-save-folder'),
+  recordingSaveHint: document.getElementById('recording-save-hint'),
+  btnRecordingChooseFolder: document.getElementById('btn-recording-choose-folder'),
+  btnRecordingSaveDefault: document.getElementById('btn-recording-save-default'),
+  btnRecordingSaveConfirm: document.getElementById('btn-recording-save-confirm'),
 
   // Modal generico
   modalOverlay: document.getElementById('app-modal-overlay'),
@@ -338,6 +346,56 @@ function showModal({ title, message, actions, dismissible = true }) {
 function hideModal() {
   els.modalOverlay.hidden = true;
 }
+
+function hideRecordingSaveDialog() {
+  if (els.recordingSaveOverlay) els.recordingSaveOverlay.hidden = true;
+}
+
+function setRecordingSaveBusy(busy) {
+  [els.btnRecordingChooseFolder, els.btnRecordingSaveDefault, els.btnRecordingSaveConfirm].forEach((button) => {
+    if (button) button.disabled = Boolean(busy);
+  });
+}
+
+function showRecordingSaveDialog(payload) {
+  if (!els.recordingSaveOverlay) return;
+  els.recordingSaveName.value = payload?.defaultName || 'transmision';
+  els.recordingSaveFolder.value = payload?.defaultFolder || '';
+  els.recordingSaveHint.textContent = `Predeterminada: ${payload?.defaultFolder || 'Documentos\\Stream Radio - Grabaciones'}`;
+  setRecordingSaveBusy(false);
+  els.recordingSaveOverlay.hidden = false;
+  window.setTimeout(() => els.recordingSaveName?.focus(), 0);
+}
+
+els.recordingSaveForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setRecordingSaveBusy(true);
+  const result = await window.streamAPI.saveRecording({
+    name: els.recordingSaveName.value,
+    folder: els.recordingSaveFolder.value
+  });
+  if (!result?.ok) {
+    setRecordingSaveBusy(false);
+    if (els.recordingSaveHint) els.recordingSaveHint.textContent = result?.message || 'No se pudo guardar la grabación. Puedes intentarlo de nuevo.';
+  }
+});
+
+els.btnRecordingSaveDefault?.addEventListener('click', async () => {
+  setRecordingSaveBusy(true);
+  const result = await window.streamAPI.saveRecordingDefault();
+  if (!result?.ok) {
+    setRecordingSaveBusy(false);
+    if (els.recordingSaveHint) els.recordingSaveHint.textContent = result?.message || 'No se pudo guardar en la carpeta predeterminada.';
+  }
+});
+
+els.btnRecordingChooseFolder?.addEventListener('click', async () => {
+  const result = await window.streamAPI.chooseRecordingFolder();
+  if (result?.ok && result.folder) {
+    els.recordingSaveFolder.value = result.folder;
+    if (els.recordingSaveHint) els.recordingSaveHint.textContent = `Destino elegido: ${result.folder}`;
+  }
+});
 
 els.modalOverlay.addEventListener('click', (event) => {
   if (event.target !== els.modalOverlay) return;
@@ -543,7 +601,11 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+const MAX_VISIBLE_LOG_LINES = 350;
+
 function appendLog(message, timestamp) {
+  if (!els.logOutput) return;
+  const wasNearBottom = els.logOutput.scrollHeight - els.logOutput.scrollTop - els.logOutput.clientHeight < 24;
   const line = document.createElement('div');
   line.className = 'log-line';
   const ts = timestamp ? new Date(timestamp) : new Date();
@@ -552,7 +614,10 @@ function appendLog(message, timestamp) {
   const ss = String(ts.getSeconds()).padStart(2, '0');
   line.textContent = `[${hh}:${mm}:${ss}] ${message}`;
   els.logOutput.appendChild(line);
-  els.logOutput.scrollTop = els.logOutput.scrollHeight;
+  while (els.logOutput.childElementCount > MAX_VISIBLE_LOG_LINES) {
+    els.logOutput.firstElementChild?.remove();
+  }
+  if (wasNearBottom) els.logOutput.scrollTop = els.logOutput.scrollHeight;
 }
 
 // ---------------------------------------------------------------------------
@@ -1574,7 +1639,13 @@ window.streamAPI.onRecordingSaveState((payload) => {
   els.recordingSaveStatus.hidden = false;
   els.recordingSaveStatus.textContent = payload?.message || labels[state] || labels.processing;
   els.recordingSaveStatus.dataset.state = state;
+  if (state === 'ready' && payload?.defaultName && /Selecciona nombre/i.test(payload.message || '')) {
+    showRecordingSaveDialog(payload);
+  }
+  if (state === 'saving') setRecordingSaveBusy(true);
   if (state === 'saved' || state === 'error') {
+    hideRecordingSaveDialog();
+    setRecordingSaveBusy(false);
     const historyView = document.querySelector('[data-view-panel="history"]');
     if (historyView && historyView.classList.contains('view-active')) loadHistory();
   }

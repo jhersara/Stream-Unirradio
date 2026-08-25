@@ -1,5 +1,29 @@
 # Historial de cambios
 
+## [Unreleased] — Corrección crítica de audio y responsividad
+
+### Transmisión y grabación
+
+- Desacoplado el cierre del grabador local del handler IPC de **Detener**: la emisión libera el encoder y responde sin esperar a que una tubería de grabación con backpressure acepte EOF.
+- Añadidas colas acotadas, backpressure y escritura cooperativa fuera del callback nativo de PortAudio para proteger la continuidad del vivo y limitar el consumo de memoria.
+- Sustituida la carpeta predeterminada redirigible de Documentos por `%APPDATA%/Stream Radio/Stream Radio - Grabaciones/`; el formulario integrado sigue permitiendo seleccionar otra carpeta.
+- Añadidos límites de tiempo a las operaciones de acceso, creación, movimiento y copia de grabaciones para que una unidad lenta o una carpeta de red no congele Electron.
+- Movido el cálculo RMS/pico y el espectro de 24 bandas a un worker dedicado, con un máximo de dos solicitudes de métricas pendientes.
+
+### Biblioteca e interfaz
+
+- Cacheado en memoria el índice de Biblioteca para evitar releer y parsear `library.json` en cada solicitud `streamradio://`.
+- Limitado el registro visual del renderer a 350 líneas y eliminado el desplazamiento forzado cuando el usuario no está al final.
+- Conservado el flujo de guardado integrado con estados visibles de procesamiento, selección de nombre/carpeta, guardado correcto y error recuperable.
+
+### Validación
+
+- E2E local con servidor Icecast emulado: transmisión sin grabación, transmisión con grabación, detención, guardado predeterminado y verificación de renderer responsivo.
+- Smoke test de Biblioteca: ocho cargas consecutivas de la pista real más corta (`5254d8f3-216a-41fa-a35c-8c1dd0f3323a`, aproximadamente 5,59 s).
+- Regresiones de adaptadores Icecast/SHOUTcast y perfil FFmpeg ejecutadas correctamente.
+
+---
+
 ## [1.3.1] — Estabilidad y rendimiento
 
 ### Preescucha y consumo de memoria

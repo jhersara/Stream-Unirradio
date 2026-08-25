@@ -45,6 +45,13 @@ function registerIpcHandlers(mainWindow) {
     return { ok: true };
   });
 
+  ipcMain.handle('recording:choose-folder', async () => ffmpegStream.chooseRecordingFolder(mainWindow));
+  ipcMain.handle('recording:save', async (event, payload = {}) => ffmpegStream.savePendingRecording(mainWindow, {
+    folder: payload.folder,
+    name: payload.name
+  }));
+  ipcMain.handle('recording:save-default', async () => ffmpegStream.savePendingRecording(mainWindow, { useDefault: true }));
+
   ipcMain.handle('stream:preview-start', async (event, deviceId) => {
     return ffmpegStream.startPreview(mainWindow, deviceId);
   });

@@ -20,6 +20,13 @@ const { startScheduler } = require('./scheduler');
 let mainWindow = null;
 let forceClose = false;
 
+function writeRuntimeDiagnostic(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  fs.promises.mkdir(app.getPath('logs'), { recursive: true })
+    .then(() => fs.promises.appendFile(path.join(app.getPath('logs'), 'stream-radio-runtime.log'), line, 'utf8'))
+    .catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Bloqueo de instancia unica: sin esto, cualquier doble arranque (doble
 // clic accidental, el instalador reabriendo la app tras "Ejecutar ahora",
@@ -56,12 +63,14 @@ function registerLibraryMediaProtocol() {
         : requestUrl.hostname === 'podcast'
           ? mediaPreviewStore.resolve(resourceId)
           : null;
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath) {
         callback({ error: -6 });
         return;
       }
 
-      callback({ path: filePath });
+      fs.promises.access(filePath, fs.constants.R_OK)
+        .then(() => callback({ path: filePath }))
+        .catch(() => callback({ error: -6 }));
     } catch {
       callback({ error: -2 });
     }
@@ -86,6 +95,12 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow.on('unresponsive', () => writeRuntimeDiagnostic('La ventana de Electron reportó UNRESPONSIVE.'));
+  mainWindow.on('responsive', () => writeRuntimeDiagnostic('La ventana de Electron volvió a responder.'));
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    writeRuntimeDiagnostic(`El proceso renderer terminó: reason=${details.reason || 'unknown'} exitCode=${details.exitCode ?? 'unknown'}.`);
+  });
+  mainWindow.webContents.on('crashed', () => writeRuntimeDiagnostic('El renderer reportó un crash.'));
 
   // ffmpeg-stream.js recibe mainWindow directamente en cada llamada desde
   // ipc-handlers.js (startStream(mainWindow, config) / stopStream(mainWindow))

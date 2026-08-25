@@ -54,32 +54,36 @@ async function main() {
 
   const expression = `
     (async () => {
-      const button = document.querySelector('#track-list [data-preview-id]');
-      if (!button) return { ok: false, reason: 'no-track-in-library' };
-      const id = button.getAttribute('data-preview-id');
-      const response = await window.streamAPI.getTrackAudioUrl(id);
-      if (!response || !response.url) return { ok: false, reason: 'no-local-url' };
-      const audio = new Audio();
-      audio.preload = 'metadata';
-      const metadata = await new Promise((resolve) => {
-        const timeout = setTimeout(() => resolve({ event: 'timeout', readyState: audio.readyState }), 5000);
-        audio.addEventListener('loadedmetadata', () => {
-          clearTimeout(timeout);
-          resolve({ event: 'loadedmetadata', readyState: audio.readyState, duration: audio.duration });
-        }, { once: true });
-        audio.addEventListener('error', () => {
-          clearTimeout(timeout);
-          resolve({ event: 'error', readyState: audio.readyState });
-        }, { once: true });
-        audio.src = response.url;
+      const library = await window.streamAPI.listLibrary();
+      const tracks = Array.isArray(library?.tracks) ? library.tracks : [];
+      const track = tracks.slice().sort((a, b) => (Number(a.durationSeconds) || 999999) - (Number(b.durationSeconds) || 999999))[0];
+      const id = track?.id;
+      if (!id) return { ok: false, reason: 'no-track-in-library' };
+      const attempts = [];
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const response = await window.streamAPI.getTrackAudioUrl(id);
+        if (!response || !response.url) return { ok: false, reason: 'no-local-url', attempt };
+        const audio = new Audio();
+        audio.preload = 'metadata';
+        const metadata = await new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve({ event: 'timeout', readyState: audio.readyState }), 5000);
+          audio.addEventListener('loadedmetadata', () => {
+            clearTimeout(timeout);
+            resolve({ event: 'loadedmetadata', readyState: audio.readyState, duration: audio.duration });
+          }, { once: true });
+          audio.addEventListener('error', () => {
+            clearTimeout(timeout);
+            resolve({ event: 'error', readyState: audio.readyState });
+          }, { once: true });
+          audio.src = response.url;
+          audio.load();
+        });
+        audio.removeAttribute('src');
         audio.load();
-      });
-      // CDP no representa un gesto real del usuario; por eso este smoke test
-      // valida el contrato de carga de medios y deja la reproducción audible a
-      // la ruta real de click de la interfaz.
-      audio.removeAttribute('src');
-      audio.load();
-      return { ok: metadata.event === 'loadedmetadata', id, url: response.url, metadata };
+        attempts.push(metadata);
+        if (metadata.event !== 'loadedmetadata') return { ok: false, id, attempt, metadata };
+      }
+      return { ok: true, id, durationHint: track.durationSeconds, attempts };
     })()
   `;
 

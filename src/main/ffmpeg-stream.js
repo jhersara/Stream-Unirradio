@@ -1,7 +1,8 @@
 const { spawn } = require('child_process');
+const { Worker } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
-const { app, dialog } = require('electron');
+const { app } = require('electron');
 const { resolveFfmpegPath } = require('./media-probe');
 const libraryManager = require('./library-manager');
 const audioCapture = require('./audio-capture');
@@ -24,6 +25,8 @@ const SAMPLE_RATE = 44100;
 const CHANNELS = 2;
 const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SECOND = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE;
+const MAX_PIPE_QUEUE_BYTES = BYTES_PER_SECOND * 2;
+const MAX_OUTPUT_QUEUE_BYTES = BYTES_PER_SECOND * 2;
 const OUTRO_CUTOFF_SECONDS = 2;
 const CHUNK_MS = 50;
 // Diez actualizaciones por segundo son suficientes para interpolar el vúmetro
@@ -39,9 +42,59 @@ const DEAD_AIR_SECONDS = 15;
 // diseno de un unico boton Iniciar/Detener en la interfaz).
 let session = null;
 let pendingStart = null;
+let pendingRecording = null;
 
 // Prueba de microfono (fuera de una transmision real, ver startPreview).
 let previewState = null;
+let metricsWorker = null;
+let nextMetricsId = 1;
+const pendingMetrics = new Map();
+
+function ensureMetricsWorker() {
+  if (metricsWorker) return metricsWorker;
+  const worker = new Worker(path.join(__dirname, 'audio-metrics-worker.js'));
+  metricsWorker = worker;
+  worker.on('message', (payload) => {
+    const request = pendingMetrics.get(payload.id);
+    if (!request) return;
+    pendingMetrics.delete(payload.id);
+    if (!session || session !== request.session || session.stopRequested || !payload.metrics) return;
+    sendVuLevel(request.mainWindow, payload.metrics.peak, payload.metrics.db, payload.metrics);
+    sendSpectrum(request.mainWindow, payload.spectrum || []);
+    checkDeadAir(request.mainWindow, payload.metrics.peak, request.now);
+  });
+  worker.on('error', (error) => {
+    pendingMetrics.clear();
+    if (metricsWorker === worker) metricsWorker = null;
+    if (session) sendLog(session.mainWindow, `Aviso: se desactivó el analizador de audio (${error.message}).`);
+  });
+  worker.on('exit', () => {
+    if (metricsWorker === worker) metricsWorker = null;
+  });
+  worker.unref?.();
+  return worker;
+}
+
+function requestLiveMetrics(mainWindow, chunk, now) {
+  if (!session || pendingMetrics.size >= 2 || !chunk?.length) return;
+  const worker = ensureMetricsWorker();
+  const id = nextMetricsId++;
+  const copy = Uint8Array.from(chunk);
+  pendingMetrics.set(id, { mainWindow, now, session });
+  try {
+    worker.postMessage({ id, buffer: copy.buffer }, [copy.buffer]);
+  } catch {
+    pendingMetrics.delete(id);
+  }
+}
+
+function stopMetricsWorker() {
+  pendingMetrics.clear();
+  if (metricsWorker) {
+    metricsWorker.terminate().catch(() => {});
+    metricsWorker = null;
+  }
+}
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,12 +120,64 @@ function stopStatusTicker() {
   }
 }
 
-function writeToEncoder(chunk) {
+function flushEncoderQueue() {
   if (!session || !session.encoderProcess) return;
-  const stdin = session.encoderProcess.stdin;
+  const current = session;
+  const stdin = current.encoderProcess.stdin;
   if (!stdin || stdin.destroyed) return;
+  current.encoderDrainAttached = false;
+  while (current.encoderQueue.length > 0 && !stdin.destroyed) {
+    const next = current.encoderQueue.shift();
+    current.encoderQueueBytes -= next.length;
+    try {
+      if (!stdin.write(next)) {
+        current.encoderBackpressured = true;
+        stdin.once('drain', () => {
+          if (session === current) {
+            current.encoderBackpressured = false;
+            flushEncoderQueue();
+          }
+        });
+        current.encoderDrainAttached = true;
+        return;
+      }
+    } catch {
+      current.encoderQueue.length = 0;
+      current.encoderQueueBytes = 0;
+      return;
+    }
+  }
+  current.encoderBackpressured = false;
+}
+
+function writeToEncoder(chunk) {
+  if (!session || !session.encoderProcess || !chunk?.length) return;
+  const current = session;
+  const stdin = current.encoderProcess.stdin;
+  if (!stdin || stdin.destroyed) return;
+  if (current.encoderBackpressured || current.encoderQueue.length > 0) {
+    if (current.encoderQueueBytes + chunk.length <= MAX_PIPE_QUEUE_BYTES) {
+      current.encoderQueue.push(chunk);
+      current.encoderQueueBytes += chunk.length;
+    } else if (!current.encoderQueueWarned) {
+      current.encoderQueueWarned = true;
+      sendLog(current.mainWindow, 'Aviso: el encoder está saturado; se limita la cola de audio para evitar que la aplicación consuma memoria sin límite.');
+    }
+    return;
+  }
   try {
-    stdin.write(chunk);
+    if (!stdin.write(chunk)) {
+      current.encoderBackpressured = true;
+      if (!current.encoderDrainAttached) {
+        current.encoderDrainAttached = true;
+        stdin.once('drain', () => {
+          if (session === current) {
+            current.encoderBackpressured = false;
+            flushEncoderQueue();
+          }
+        });
+      }
+    }
   } catch {
     // Pipe roto: el evento 'close'/'error' del proceso se encarga de
     // reportarlo y limpiar el estado.
@@ -93,22 +198,66 @@ function writeEncodedOutput(chunk) {
   }
 }
 
-function writeToRecorder(chunk) {
+function flushRecorderQueue() {
   if (!session || !session.recorderProcess) return;
-  const stdin = session.recorderProcess.stdin;
-  if (!stdin || stdin.destroyed || session.recorderBackpressured) return;
+  const current = session;
+  const stdin = current.recorderProcess.stdin;
+  if (!stdin || stdin.destroyed) return;
+  current.recorderDrainAttached = false;
+  while (current.recorderQueue.length > 0 && !stdin.destroyed) {
+    const next = current.recorderQueue.shift();
+    current.recorderQueueBytes -= next.length;
+    try {
+      if (!stdin.write(next)) {
+        current.recorderBackpressured = true;
+        stdin.once('drain', () => {
+          if (session === current) {
+            current.recorderBackpressured = false;
+            flushRecorderQueue();
+          }
+        });
+        current.recorderDrainAttached = true;
+        return;
+      }
+    } catch {
+      current.recorderQueue.length = 0;
+      current.recorderQueueBytes = 0;
+      return;
+    }
+  }
+  current.recorderBackpressured = false;
+}
+
+function writeToRecorder(chunk) {
+  if (!session || !session.recorderProcess || !chunk?.length) return;
+  const current = session;
+  const stdin = current.recorderProcess.stdin;
+  if (!stdin || stdin.destroyed) return;
+  if (current.recorderBackpressured || current.recorderQueue.length > 0) {
+    if (current.recorderQueueBytes + chunk.length <= MAX_PIPE_QUEUE_BYTES) {
+      current.recorderQueue.push(chunk);
+      current.recorderQueueBytes += chunk.length;
+    } else if (!current.recorderBackpressureWarned) {
+      current.recorderBackpressureWarned = true;
+      sendLog(current.mainWindow, 'Aviso: la grabación local está más lenta; se limita su cola sin afectar la transmisión.');
+    }
+    return;
+  }
   try {
-    const accepted = stdin.write(chunk);
-    if (!accepted) {
-      session.recorderBackpressured = true;
-      stdin.once('drain', () => {
-        if (session && session.recorderProcess?.stdin === stdin) {
-          session.recorderBackpressured = false;
-        }
-      });
-      if (!session.recorderBackpressureWarned) {
-        session.recorderBackpressureWarned = true;
-        sendLog(session.mainWindow, 'Aviso: la grabación local está procesando más lento; la transmisión en vivo no se detendrá.');
+    if (!stdin.write(chunk)) {
+      current.recorderBackpressured = true;
+      if (!current.recorderDrainAttached) {
+        current.recorderDrainAttached = true;
+        stdin.once('drain', () => {
+          if (session === current) {
+            current.recorderBackpressured = false;
+            flushRecorderQueue();
+          }
+        });
+      }
+      if (!current.recorderBackpressureWarned) {
+        current.recorderBackpressureWarned = true;
+        sendLog(current.mainWindow, 'Aviso: la grabación local está procesando más lento; la transmisión en vivo no se detendrá.');
       }
     }
   } catch {
@@ -117,9 +266,38 @@ function writeToRecorder(chunk) {
 }
 
 /** Escribe el mismo audio al encoder (Icecast) y, si aplica, a la grabacion local. */
+function pumpOutputQueue(current) {
+  if (!current || session !== current) return;
+  current.outputPumpScheduled = false;
+  const startedAt = Date.now();
+  while (current.outputQueue.length > 0 && Date.now() - startedAt < 5) {
+    const chunk = current.outputQueue.shift();
+    current.outputQueueBytes -= chunk.length;
+    writeToEncoder(chunk);
+    writeToRecorder(chunk);
+  }
+  if (current.outputQueue.length > 0 && session === current) {
+    current.outputPumpScheduled = true;
+    setImmediate(() => pumpOutputQueue(current));
+  }
+}
+
 function writeToOutputs(chunk) {
-  writeToEncoder(chunk);
-  writeToRecorder(chunk);
+  if (!session || !chunk?.length) return;
+  const current = session;
+  if (current.outputQueueBytes + chunk.length <= MAX_OUTPUT_QUEUE_BYTES) {
+    // El buffer recibido por naudiodon puede reutilizarse después del callback;
+    // se copia una sola vez y el trabajo de tuberías ocurre fuera del callback.
+    current.outputQueue.push(Buffer.from(chunk));
+    current.outputQueueBytes += chunk.length;
+  } else if (!current.outputQueueWarned) {
+    current.outputQueueWarned = true;
+    sendLog(current.mainWindow, 'Aviso: la salida de audio está saturada; se limita la cola para proteger la memoria y mantener viva la interfaz.');
+  }
+  if (!current.outputPumpScheduled) {
+    current.outputPumpScheduled = true;
+    setImmediate(() => pumpOutputQueue(current));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,16 +342,24 @@ function buildRecordingFileStamp() {
 }
 
 function buildDefaultRecordingPath(stamp = buildRecordingFileStamp()) {
-  const dir = path.join(app.getPath('documents'), 'Stream Radio - Grabaciones');
-  fs.mkdirSync(dir, { recursive: true });
-  const base = path.join(dir, `transmision-${stamp}`);
-  let candidate = `${base}.mp3`;
-  let suffix = 2;
-  while (fs.existsSync(candidate)) {
-    candidate = `${base}-${suffix}.mp3`;
-    suffix += 1;
-  }
-  return candidate;
+  // Documents puede estar redirigido a OneDrive y bloquear operaciones de
+  // archivos durante segundos. La carpeta predeterminada vive en userData,
+  // siempre local; el usuario aún puede elegir otra carpeta desde el overlay.
+  const dir = path.join(app.getPath('userData'), 'Stream Radio - Grabaciones');
+  return path.join(dir, `transmision-${stamp}.mp3`);
+}
+
+function withFileTimeout(operation, label, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} tardó demasiado`)), timeoutMs);
+    Promise.resolve(operation).then((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }
 
 function buildTemporaryRecordingPath(stamp = buildRecordingFileStamp()) {
@@ -186,89 +372,113 @@ function ensureMp3Extension(filePath) {
   return /\.mp3$/i.test(filePath) ? filePath : `${filePath}.mp3`;
 }
 
-async function chooseRecordingDestination(mainWindow, defaultPath) {
-  if (!mainWindow || mainWindow.isDestroyed()) return defaultPath;
+function sanitizeRecordingName(value) {
+  const cleaned = String(value || 'grabacion')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.mp3$/i, '')
+    .slice(0, 120);
+  return cleaned || 'grabacion';
+}
 
-  try {
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Guardar grabación de la transmisión',
-      defaultPath,
-      buttonLabel: 'Guardar grabación',
-      filters: [{ name: 'Grabación MP3', extensions: ['mp3'] }],
-      properties: ['showOverwriteConfirmation', 'createDirectory']
-    });
-
-    if (result.canceled || !result.filePath) {
-      sendLog(mainWindow, `No se seleccionó otra ubicación; se usará la carpeta predeterminada: ${defaultPath}`);
-      return defaultPath;
-    }
-
-    return ensureMp3Extension(result.filePath);
-  } catch (err) {
-    sendLog(mainWindow, `Aviso: no se pudo abrir el selector de guardado (${err.message}). Se usará la carpeta predeterminada.`);
-    return defaultPath;
-  }
+function buildRecordingDestination(folder, name, fallbackPath) {
+  const safeFolder = String(folder || '').trim() || path.dirname(fallbackPath);
+  const safeName = sanitizeRecordingName(name || path.basename(fallbackPath, '.mp3'));
+  return ensureMp3Extension(path.join(safeFolder, safeName));
 }
 
 async function moveRecordingFile(sourcePath, destinationPath) {
-  if (!sourcePath || !fs.existsSync(sourcePath)) return null;
+  if (!sourcePath) return null;
+  try {
+    await withFileTimeout(fs.promises.access(sourcePath, fs.constants.R_OK), 'Acceso al archivo temporal');
+  } catch (err) {
+    return null;
+  }
   const destination = ensureMp3Extension(destinationPath);
-  await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+  await withFileTimeout(fs.promises.mkdir(path.dirname(destination), { recursive: true }), 'Creación de carpeta de grabación');
 
   // El selector ya confirmó la sobreescritura si el usuario eligió un archivo
   // existente. Eliminarlo antes del rename hace que Windows se comporte igual
   // que los demás sistemas sin bloquear el proceso principal.
   if (path.resolve(sourcePath) !== path.resolve(destination)) {
-    await fs.promises.rm(destination, { force: true });
+    await withFileTimeout(fs.promises.rm(destination, { force: true }), 'Eliminación del destino anterior');
   }
 
   try {
-    await fs.promises.rename(sourcePath, destination);
+    await withFileTimeout(fs.promises.rename(sourcePath, destination), 'Movimiento de la grabación');
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
     // copyFile/unlink usan el pool de libuv: una copia grande entre discos no
     // congela el hilo principal ni la interfaz de Electron.
-    await fs.promises.copyFile(sourcePath, destination);
-    await fs.promises.unlink(sourcePath);
+    await withFileTimeout(fs.promises.copyFile(sourcePath, destination), 'Copia de la grabación');
+    await withFileTimeout(fs.promises.unlink(sourcePath), 'Limpieza del temporal');
   }
   return destination;
 }
 
-async function finalizeRecording(mainWindow, finishedSession) {
+function prepareRecordingSave(mainWindow, finishedSession) {
   if (!finishedSession?.recordingRequested || !finishedSession.recordingTempPath) return null;
-  if (!fs.existsSync(finishedSession.recordingTempPath)) {
-    sendRecordingSaveState(mainWindow, { state: 'error', message: 'No se encontró el archivo temporal de la grabación.' });
-    return null;
-  }
-
   const defaultPath = buildDefaultRecordingPath(finishedSession.recordingStamp);
+  pendingRecording = { mainWindow, finishedSession, defaultPath };
   sendRecordingSaveState(mainWindow, {
     state: 'ready',
     defaultPath,
+    defaultName: path.basename(defaultPath, '.mp3'),
+    defaultFolder: path.dirname(defaultPath),
     message: finishedSession.recordingSavePrompt === false
-      ? 'Preparando guardado automático…'
+      ? 'Guardando automáticamente en la carpeta predeterminada…'
       : 'Selecciona el nombre y la carpeta de la grabación.'
   });
+  return defaultPath;
+}
 
-  const destination = finishedSession.recordingSavePrompt === false
-    ? defaultPath
-    : await chooseRecordingDestination(mainWindow, defaultPath);
-
-  sendRecordingSaveState(mainWindow, { state: 'saving', destination, message: 'Guardando grabación…' });
-
+async function chooseRecordingFolder(mainWindow) {
+  if (!pendingRecording || !mainWindow || mainWindow.isDestroyed()) return { ok: false, reason: 'no-pending-recording' };
+  const { dialog } = require('electron');
   try {
-    const finalPath = moveRecordingFile(finishedSession.recordingTempPath, destination);
-    if (finalPath) {
-      sendRecordingSaveState(mainWindow, { state: 'saved', path: finalPath, message: 'Grabación guardada correctamente.' });
-      sendLog(mainWindow, `Grabación guardada en: ${finalPath}`);
-      return finalPath;
-    }
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Seleccionar carpeta de grabación',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, reason: 'cancelled' };
+    return { ok: true, folder: result.filePaths[0] };
   } catch (err) {
-    sendRecordingSaveState(mainWindow, { state: 'error', message: `No se pudo guardar la grabación: ${err.message}` });
-    sendLog(mainWindow, `Aviso: no se pudo mover la grabación a ${destination} (${err.message}).`);
+    sendLog(mainWindow, `Aviso: no se pudo seleccionar la carpeta (${err.message}).`);
+    return { ok: false, reason: 'folder-selection-failed' };
+  }
+}
+
+async function savePendingRecording(mainWindow, options = {}) {
+  if (!pendingRecording) return { ok: false, reason: 'no-pending-recording' };
+  const current = pendingRecording;
+  pendingRecording = null;
+  const { finishedSession, defaultPath } = current;
+  try {
+    await fs.promises.access(finishedSession.recordingTempPath, fs.constants.R_OK);
+  } catch {
+    sendRecordingSaveState(mainWindow, { state: 'error', message: 'No se encontró el archivo temporal de la grabación.' });
+    return { ok: false, reason: 'temp-file-missing' };
   }
 
-  return finishedSession.recordingTempPath;
+  const destination = options.useDefault
+    ? defaultPath
+    : buildRecordingDestination(options.folder, options.name, defaultPath);
+  sendRecordingSaveState(mainWindow, { state: 'saving', destination, message: 'Guardando grabación sin bloquear la emisión…' });
+  try {
+    const finalPath = await moveRecordingFile(finishedSession.recordingTempPath, destination);
+    if (!finalPath) throw new Error('No se pudo mover el archivo temporal.');
+    finishedSession.recordingPath = finalPath;
+    sendRecordingSaveState(mainWindow, { state: 'saved', path: finalPath, message: 'Grabación guardada correctamente.' });
+    sendLog(mainWindow, `Grabación guardada en: ${finalPath}`);
+    logHistoryEntry(finishedSession, 'manual');
+    return { ok: true, path: finalPath };
+  } catch (err) {
+    pendingRecording = current;
+    sendRecordingSaveState(mainWindow, { state: 'error', message: `No se pudo guardar la grabación: ${err.message}` });
+    sendLog(mainWindow, `Aviso: no se pudo mover la grabación a ${destination} (${err.message}).`);
+    return { ok: false, reason: 'save-failed', message: err.message };
+  }
 }
 
 function startLocalRecorder(mainWindow) {
@@ -630,6 +840,50 @@ function gracefullyEndProcess(proc, timeoutMs) {
   });
 }
 
+// El archivo local es secundario frente a la emisión. En Windows, esperar a
+// que una tubería stdin con backpressure acepte EOF puede dejar una promesa IPC
+// abierta indefinidamente. Para el recorder se prioriza liberar el hilo del
+// main y se solicita el cierre mediante un proceso taskkill desacoplado: llamar
+// proc.kill() de forma síncrona puede bloquear Electron mientras FFmpeg aún
+// tiene datos en sus pipes.
+function requestProcessTermination(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32' && proc.pid) {
+    try {
+      const killer = spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], {
+        windowsHide: true,
+        detached: true,
+        stdio: 'ignore'
+      });
+      killer.unref?.();
+      return;
+    } catch { /* noop */ }
+  }
+  try { proc.kill(); } catch { /* noop */ }
+}
+
+function stopRecorderQuickly(proc) {
+  return new Promise((resolve) => {
+    if (!proc || proc.exitCode !== null) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1000);
+    proc.once('close', finish);
+    try {
+      if (proc.stdin && !proc.stdin.destroyed) proc.stdin.destroy();
+    } catch { /* noop */ }
+    requestProcessTermination(proc);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Ciclo de vida del proceso ffmpeg (encoder de salida hacia Icecast)
 // ---------------------------------------------------------------------------
@@ -660,11 +914,21 @@ function wireSourceBridgeEvents(mainWindow, bridge) {
 }
 
 function wireEncoderProcessEvents(mainWindow, encoderProcess, sourceBridge = null) {
+  let lastLogAt = 0;
+  let suppressed = 0;
   encoderProcess.stderr.on('data', (chunk) => {
+    const now = Date.now();
     chunk.toString().split('\n').forEach((rawLine) => {
       const line = rawLine.trim();
       if (!line) return;
-      sendLog(mainWindow, `FFmpeg: ${line}`);
+      if (now - lastLogAt < 250) {
+        suppressed += 1;
+        return;
+      }
+      const suffix = suppressed > 0 ? ` (${suppressed} mensajes repetidos omitidos)` : '';
+      suppressed = 0;
+      lastLogAt = now;
+      sendLog(mainWindow, `FFmpeg: ${line}${suffix}`);
       const hint = interpretFfmpegLine(line);
       if (hint) sendLog(mainWindow, `Sugerencia: ${hint}`);
     });
@@ -800,10 +1064,21 @@ async function attemptReconnect(mainWindow) {
 }
 
 function wireRecorderProcessEvents(mainWindow, recorderProcess) {
+  let lastLogAt = 0;
+  let suppressed = 0;
   recorderProcess.stderr.on('data', (chunk) => {
+    const now = Date.now();
     chunk.toString().split('\n').forEach((rawLine) => {
       const line = rawLine.trim();
-      if (line) sendLog(mainWindow, `Grabacion: ${line}`);
+      if (!line) return;
+      if (now - lastLogAt < 500) {
+        suppressed += 1;
+        return;
+      }
+      const suffix = suppressed > 0 ? ` (${suppressed} mensajes repetidos omitidos)` : '';
+      suppressed = 0;
+      lastLogAt = now;
+      sendLog(mainWindow, `Grabacion: ${line}${suffix}`);
     });
   });
   recorderProcess.on('error', (err) => {
@@ -899,10 +1174,18 @@ function startPreview(mainWindow, deviceId) {
   return { ok: true };
 }
 
+function releaseInputStream(inputStream) {
+  if (!inputStream) return;
+  setImmediate(() => {
+    try { inputStream.quit(() => {}); } catch { /* noop */ }
+  });
+}
+
 function stopPreview() {
   if (!previewState) return { ok: true };
-  try { previewState.inputStream.quit(() => {}); } catch { /* noop */ }
+  const inputStream = previewState.inputStream;
   previewState = null;
+  releaseInputStream(inputStream);
   return { ok: true };
 }
 
@@ -914,6 +1197,10 @@ function isPreviewing() {
 // Secuencia: conectar -> (intro) -> vivo
 // ---------------------------------------------------------------------------
 async function startStream(mainWindow, rawConfig) {
+  if (pendingRecording) {
+    sendLog(mainWindow, 'Primero guarda la grabación pendiente antes de iniciar otra transmisión.');
+    return { ok: false, reason: 'recording-save-pending' };
+  }
   if (session || pendingStart) {
     sendLog(mainWindow, 'Ya hay una transmision en curso o conectándose.');
     return { ok: false, reason: 'already-streaming' };
@@ -998,7 +1285,19 @@ async function startStream(mainWindow, rawConfig) {
     outroPcmPromise: null,
     recordingRequested: Boolean(config.recordSession),
     recorderBackpressured: false,
-    recorderBackpressureWarned: false
+    recorderBackpressureWarned: false,
+    recorderQueue: [],
+    recorderQueueBytes: 0,
+    recorderDrainAttached: false,
+    encoderBackpressured: false,
+    encoderQueue: [],
+    encoderQueueBytes: 0,
+    encoderDrainAttached: false,
+    encoderQueueWarned: false,
+    outputQueue: [],
+    outputQueueBytes: 0,
+    outputQueueWarned: false,
+    outputPumpScheduled: false
   };
   pendingStart = null;
 
@@ -1039,9 +1338,12 @@ async function startStream(mainWindow, rawConfig) {
   sendLog(mainWindow, 'Encoder FFmpeg iniciado correctamente.');
   session.startedAt = Date.now();
   startStatusTicker();
-  // El grabador se inicia fuera del camino crítico para que Documents/FFmpeg
-  // no puedan congelar el arranque de la emisión. Si falla, el vivo continúa.
-  startLocalRecorder(mainWindow);
+  // El grabador se inicia en el siguiente turno del event loop, después de
+  // devolver el control al flujo de emisión. Así Documents, el spawn de
+  // FFmpeg o un antivirus no pueden bloquear el botón Iniciar.
+  setImmediate(() => {
+    if (session && !session.stopRequested) startLocalRecorder(mainWindow);
+  });
 
   // A partir de aqui la secuencia intro -> vivo corre en segundo plano via
   // eventos IPC; el handler de 'stream:start' ya puede devolver el control.
@@ -1130,10 +1432,7 @@ function beginLiveCapture(mainWindow) {
     const now = Date.now();
     if (now - lastVuEmit >= VU_EMIT_INTERVAL_MS) {
       lastVuEmit = now;
-      const metrics = computeAudioMetrics(gained);
-      sendVuLevel(mainWindow, metrics.peak, metrics.db, metrics);
-      sendSpectrum(mainWindow, computeSpectrum(gained, SPECTRUM_BAND_COUNT));
-      checkDeadAir(mainWindow, metrics.peak, now);
+      requestLiveMetrics(mainWindow, gained, now);
     }
   });
 
@@ -1195,7 +1494,7 @@ async function stopStream(mainWindow, options = {}) {
     if (session.introController) session.introController.abort();
     sendIntroProgress(mainWindow, { done: true });
     if (session.inputStream) {
-      try { session.inputStream.quit(() => {}); } catch { /* noop */ }
+      releaseInputStream(session.inputStream);
       session.inputStream = null;
     }
     sendLog(mainWindow, phaseAtStop === 'reconnecting'
@@ -1215,7 +1514,7 @@ async function stopStream(mainWindow, options = {}) {
     session.phase = 'outro';
 
     if (session.inputStream) {
-      try { session.inputStream.quit(() => {}); } catch { /* noop */ }
+      releaseInputStream(session.inputStream);
       session.inputStream = null;
     }
 
@@ -1269,29 +1568,36 @@ async function teardownSession(mainWindow, finalStatusKind) {
   session = null;
   if (finishedSession?.sourceBridge) finishedSession.sourceBridge.close();
 
-  await Promise.all([
-    gracefullyEndProcess(finishedSession ? finishedSession.encoderProcess : null, 2500),
-    gracefullyEndProcess(finishedSession ? finishedSession.recorderProcess : null, 2500)
-  ]);
+  // El encoder de emisión tiene prioridad: se espera solo a su cierre ordenado.
+  // El grabador local se finaliza en un turno posterior del event loop. Es
+  // deliberado: stdin.end() puede encontrar una tubería con backpressure y no
+  // debe ejecutarse dentro del handler IPC que responde al botón Detener.
+  const recordingActive = Boolean(finishedSession?.recordingRequested && finishedSession.recordingTempPath);
+  if (recordingActive) {
+    sendRecordingSaveState(mainWindow, { state: 'processing', message: 'La transmisión terminó; finalizando la grabación en segundo plano…' });
+  }
 
-  // Liberar la interfaz en cuanto el vivo terminó. El selector/movimiento del
-  // MP3 continúa en segundo plano y comunica su estado sin bloquear el IPC.
+  const encoderDone = gracefullyEndProcess(finishedSession ? finishedSession.encoderProcess : null, 1800);
+  await encoderDone;
+
   sendDeadAir(mainWindow, false);
   sendStatus(mainWindow, finalStatusKind, 0);
   sendLog(mainWindow, 'Transmisión finalizada. Desconectado del servidor.');
 
-  if (finishedSession?.recordingRequested && finishedSession.recordingTempPath) {
-    sendRecordingSaveState(mainWindow, { state: 'processing', message: 'La transmisión terminó; preparando la grabación…' });
-    void finalizeRecording(mainWindow, finishedSession)
-      .then((finalPath) => {
-        finishedSession.recordingPath = finalPath;
-        logHistoryEntry(finishedSession, 'manual');
-      })
-      .catch((err) => {
+  if (recordingActive) {
+    setImmediate(() => {
+      void stopRecorderQuickly(finishedSession.recorderProcess).then(() => {
+        const defaultPath = prepareRecordingSave(mainWindow, finishedSession);
+        if (finishedSession.recordingSavePrompt === false && defaultPath) {
+          return savePendingRecording(mainWindow, { useDefault: true });
+        }
+        return null;
+      }).catch((err) => {
         sendRecordingSaveState(mainWindow, { state: 'error', message: `No se pudo finalizar la grabación: ${err.message}` });
         finishedSession.recordingPath = finishedSession.recordingTempPath;
         logHistoryEntry(finishedSession, 'manual');
       });
+    });
   } else {
     logHistoryEntry(finishedSession, 'manual');
   }
@@ -1310,6 +1616,7 @@ function setGain(value) {
 // Limpieza de emergencia al cerrar la app (evita procesos ffmpeg huerfanos)
 // ---------------------------------------------------------------------------
 function shutdown() {
+  stopMetricsWorker();
   stopPreview();
   if (!session) return;
   stopStatusTicker();
@@ -1339,6 +1646,8 @@ module.exports = {
   setGain,
   shutdown,
   isStreaming,
+  chooseRecordingFolder,
+  savePendingRecording,
   startPreview,
   stopPreview,
   isPreviewing

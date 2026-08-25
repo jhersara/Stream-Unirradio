@@ -309,6 +309,23 @@
   <!-- ==================== BARRA COMPACTA ==================== -->
   <div class="compact-bar" id="compact-bar" hidden><span class="onair-dot" id="compact-dot"></span><div class="compact-labels"><span class="compact-status" id="compact-status">Desconectado</span><span class="compact-timer" id="compact-timer">00:00:00</span></div><button type="button" class="btn-icon-only" id="btn-compact-stop" title="Detener"><span data-icon="stop"></span></button><button type="button" class="btn-icon-only" id="btn-compact-restore" title="Restaurar ventana"><span data-icon="expand"></span></button></div>
 
+  <!-- ==================== GUARDADO DE GRABACIÓN ==================== -->
+  <div class="modal-overlay" id="recording-save-overlay" hidden>
+    <div class="modal-card recording-save-card" role="dialog" aria-modal="true" aria-labelledby="recording-save-title">
+      <span class="modal-kicker">GRABACIÓN LOCAL</span>
+      <h3 class="modal-title" id="recording-save-title">Guardar transmisión</h3>
+      <p class="modal-message">La emisión terminó. Elige un nombre y una carpeta; la interfaz seguirá disponible mientras se guarda.</p>
+      <form id="recording-save-form" class="recording-save-form">
+        <label class="field-label" for="recording-save-name">Nombre del archivo</label>
+        <input id="recording-save-name" class="text-input" type="text" maxlength="120" autocomplete="off" />
+        <label class="field-label" for="recording-save-folder">Carpeta de destino</label>
+        <div class="recording-folder-row"><input id="recording-save-folder" class="text-input" type="text" readonly /><button type="button" class="btn-secondary" id="btn-recording-choose-folder">Elegir carpeta</button></div>
+        <p class="recording-save-hint" id="recording-save-hint"></p>
+        <div class="modal-actions recording-save-actions"><button type="button" class="btn-secondary" id="btn-recording-save-default">Usar carpeta predeterminada</button><button type="submit" class="btn-primary" id="btn-recording-save-confirm">Guardar grabación</button></div>
+      </form>
+    </div>
+  </div>
+
   <!-- ==================== MODAL ==================== -->
   <div class="modal-overlay" id="app-modal-overlay" hidden><div class="modal-card"><span class="modal-kicker">STREAM RADIO</span><h3 class="modal-title" id="app-modal-title"></h3><p class="modal-message" id="app-modal-message"></p><div class="modal-actions" id="app-modal-actions"></div></div></div>
 

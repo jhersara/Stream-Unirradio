@@ -2435,3 +2435,19 @@ input[type="range"] { accent-color: var(--violet); }
     max-width: 58vw;
   }
 }
+
+/* Guardado de grabación sin diálogo bloqueante */
+.recording-save-card { max-width: 620px; }
+.recording-save-form { display: grid; gap: 10px; margin-top: 18px; }
+.field-label { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.text-input { width: 100%; min-height: 42px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-input); color: var(--text); padding: 0 12px; font: inherit; }
+.text-input:focus { outline: 2px solid rgba(138, 77, 255, .55); outline-offset: 1px; }
+.recording-folder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.recording-save-hint { min-height: 18px; margin: 2px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.recording-save-actions { justify-content: flex-end; margin-top: 8px; }
+.recording-save-status[data-state="processing"], .recording-save-status[data-state="saving"] { color: var(--violet); }
+.recording-save-status[data-state="error"] { color: #ff8b9e; }
+@media (max-width: 700px) {
+  .recording-folder-row { grid-template-columns: 1fr; }
+  .recording-save-actions { flex-direction: column-reverse; }
+}

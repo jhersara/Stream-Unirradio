@@ -25,6 +25,18 @@ function getIndexPath() {
   return path.join(getLibraryRoot(), 'library.json');
 }
 
+let cachedIndex = null;
+let cachedIndexSignature = '';
+
+function getIndexSignature() {
+  try {
+    const stat = fs.statSync(getIndexPath());
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return '';
+  }
+}
+
 function ensureTracksDir() {
   const dirPath = path.join(getLibraryRoot(), 'tracks');
   fs.mkdirSync(dirPath, { recursive: true });
@@ -40,17 +52,27 @@ function ensureTracksDir() {
  */
 function readIndex() {
   const idxPath = getIndexPath();
-  if (!fs.existsSync(idxPath)) return { tracks: [] };
+  if (cachedIndex) return cachedIndex;
+  const signature = getIndexSignature();
+  if (!signature) {
+    cachedIndex = { tracks: [] };
+    cachedIndexSignature = '';
+    return cachedIndex;
+  }
 
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(idxPath, 'utf-8'));
   } catch {
-    return { tracks: [] };
+    cachedIndex = { tracks: [] };
+    cachedIndexSignature = signature;
+    return cachedIndex;
   }
 
   if (Array.isArray(parsed.tracks)) {
-    return { tracks: parsed.tracks };
+    cachedIndex = { tracks: parsed.tracks };
+    cachedIndexSignature = signature;
+    return cachedIndex;
   }
 
   if (Array.isArray(parsed.intros) || Array.isArray(parsed.outros)) {
@@ -64,12 +86,16 @@ function readIndex() {
     return migrated;
   }
 
-  return { tracks: [] };
+  cachedIndex = { tracks: [] };
+  cachedIndexSignature = signature;
+  return cachedIndex;
 }
 
 function writeIndex(data) {
   fs.mkdirSync(getLibraryRoot(), { recursive: true });
   fs.writeFileSync(getIndexPath(), JSON.stringify(data, null, 2), 'utf-8');
+  cachedIndex = data;
+  cachedIndexSignature = getIndexSignature();
 }
 
 /**
