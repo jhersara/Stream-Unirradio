@@ -1,6 +1,6 @@
 # Historial de cambios
 
-## [Unreleased] — Corrección crítica de audio y responsividad
+## [1.3.2] — Corrección crítica de audio y responsividad
 
 ### Transmisión y grabación
 
