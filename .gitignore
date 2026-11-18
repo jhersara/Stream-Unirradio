@@ -17,3 +17,6 @@ capture-preload.js
 capture-screenshots.js
 capture-responsive.js
 capture-menu.js
+
+# Respaldo local previo a la reestructuracion del proceso principal
+_backup-pre-refactor/

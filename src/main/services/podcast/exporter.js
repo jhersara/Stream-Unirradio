@@ -2,9 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
-const { resolveFfmpegPath } = require('./media-probe');
-const libraryManager = require('./library-manager');
-const { sendLog, sendPodcastExportProgress } = require('./ipc-events');
+const { resolveFfmpegPath } = require('../media/probe');
+const libraryManager = require('../media/library');
+const { sendLog, sendPodcastExportProgress } = require('../../ipc/events');
+const { lowerPriority } = require('../../utils/process');
 
 const SAMPLE_RATE = 44100;
 const FILTER_THREADS = Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1));
@@ -164,6 +165,7 @@ function exportEpisode(mainWindow, episode, outputPath) {
     try {
       process = spawn(resolveFfmpegPath(), buildArgs(segments, outputPath, episode), { windowsHide: true });
       job.process = process;
+      lowerPriority(process);
       activeExport = job;
     } catch (error) {
       reject(error);

@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const providers = require('./src/main/radio-providers');
+const providers = require('./src/main/services/providers/radio-providers');
 
 const ffmpegPath = path.join(__dirname, 'resources', 'ffmpeg', 'ffmpeg.exe');
 assert.ok(fs.existsSync(ffmpegPath), `No existe ${ffmpegPath}`);

@@ -1,13 +1,9 @@
 /**
- * Captura de microfono con naudiodon (bindings de PortAudio), directamente
- * en el proceso principal (ver especificacion funcional #1 del README: el
- * audio NUNCA pasa por IPC hacia el renderer).
+ * Captura de microfono con naudiodon (PortAudio), directamente en el proceso
+ * principal: el audio nunca pasa por IPC hacia el renderer.
  *
- * El require de naudiodon esta envuelto en try/catch a proposito: es un
- * modulo nativo que requiere compilar con node-gyp (Windows SDK). Si aun no
- * esta compilado en esta maquina (ver Fase 1.5 del README), la app debe
- * seguir arrancando igual -- solo que sin poder listar dispositivos ni
- * transmitir hasta que se resuelva.
+ * El require esta envuelto en try/catch: es un modulo nativo (node-gyp). Si
+ * no esta compilado, la app arranca igual pero sin captura de audio.
  */
 let naudiodon = null;
 let loadError = null;
@@ -28,8 +24,7 @@ function getLoadError() {
 function listInputDevices() {
   if (!naudiodon) return [];
   try {
-    const devices = naudiodon.getDevices();
-    return devices
+    return naudiodon.getDevices()
       .filter((d) => d.maxInputChannels > 0)
       .map((d) => ({ id: String(d.id), name: d.name }));
   } catch {
@@ -37,11 +32,7 @@ function listInputDevices() {
   }
 }
 
-/**
- * Crea (sin arrancar) un stream de entrada de audio. El caller debe llamar
- * .start() para comenzar a recibir eventos 'data', y .quit(callback) para
- * detenerlo.
- */
+/** Crea (sin arrancar) un stream de entrada. El caller llama .start() y .quit(cb). */
 function createInputStream(deviceId, sampleRate, channels) {
   if (!naudiodon) {
     throw new Error('naudiodon no esta disponible/compilado en este entorno.');
@@ -58,4 +49,12 @@ function createInputStream(deviceId, sampleRate, channels) {
   });
 }
 
-module.exports = { isAvailable, getLoadError, listInputDevices, createInputStream };
+/** Libera el dispositivo fuera del turno actual del event loop. */
+function releaseInputStream(inputStream) {
+  if (!inputStream) return;
+  setImmediate(() => {
+    try { inputStream.quit(() => {}); } catch { /* noop */ }
+  });
+}
+
+module.exports = { isAvailable, getLoadError, listInputDevices, createInputStream, releaseInputStream };

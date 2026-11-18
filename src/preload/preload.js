@@ -1,86 +1,92 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 /**
- * Superficie expuesta al renderer. El renderer nunca toca ipcRenderer ni
- * ningun modulo de Node directamente (contextIsolation activo).
+ * Superficie expuesta al renderer (window.streamAPI). El renderer nunca toca
+ * ipcRenderer ni modulos de Node (contextIsolation activo y sandbox).
+ *
+ * invoke(canal) -> funcion que llama al main y devuelve una promesa
+ * listen(canal) -> suscripcion a eventos del main; devuelve la funcion de baja
  */
+const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
+
+function listen(channel, map = (payload) => payload) {
+  return (callback) => {
+    const listener = (_event, payload) => callback(map(payload));
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 contextBridge.exposeInMainWorld('streamAPI', {
-  startStream: (config) => ipcRenderer.invoke('stream:start', config),
-  stopStream: () => ipcRenderer.invoke('stream:stop'),
-  togglePause: () => ipcRenderer.invoke('stream:toggle-pause'),
-  chooseRecordingFolder: () => ipcRenderer.invoke('recording:choose-folder'),
-  saveRecording: (payload) => ipcRenderer.invoke('recording:save', payload),
-  saveRecordingDefault: () => ipcRenderer.invoke('recording:save-default'),
-  setGain: (value) => ipcRenderer.invoke('stream:set-gain', value),
-  listDevices: () => ipcRenderer.invoke('devices:list'),
-  getAppInfo: () => ipcRenderer.invoke('app:info'),
+  // Transmision
+  startStream: invoke('stream:start'),
+  stopStream: invoke('stream:stop'),
+  togglePause: invoke('stream:toggle-pause'),
+  setGain: invoke('stream:set-gain'),
+  listDevices: invoke('devices:list'),
+  getAppInfo: invoke('app:info'),
+
+  // Grabacion local de la emision
+  chooseRecordingFolder: invoke('recording:choose-folder'),
+  saveRecording: invoke('recording:save'),
+  saveRecordingDefault: invoke('recording:save-default'),
 
   // Prueba de microfono (fuera de una transmision real)
-  startPreview: (deviceId) => ipcRenderer.invoke('stream:preview-start', deviceId),
-  stopPreview: () => ipcRenderer.invoke('stream:preview-stop'),
+  startPreview: invoke('stream:preview-start'),
+  stopPreview: invoke('stream:preview-stop'),
 
-  // Biblioteca persistente de pistas (unificada: sin categoria fija de
-  // intro/outro a nivel de almacenamiento; importTracks admite seleccion
-  // multiple de archivos en un solo dialogo).
-  listLibrary: () => ipcRenderer.invoke('library:list'),
-  importTracks: () => ipcRenderer.invoke('library:import'),
-  deleteTrack: (id) => ipcRenderer.invoke('library:delete', id),
-  getTrackAudioUrl: (id) => ipcRenderer.invoke('library:get-audio-url', id),
+  // Biblioteca persistente de pistas
+  listLibrary: invoke('library:list'),
+  importTracks: invoke('library:import'),
+  deleteTrack: invoke('library:delete'),
+  getTrackAudioUrl: invoke('library:get-audio-url'),
 
   // Podcast Studio
-  listEpisodes: () => ipcRenderer.invoke('podcast:list'),
-  createEpisode: (input) => ipcRenderer.invoke('podcast:create', input),
-  updateEpisode: (id, patch) => ipcRenderer.invoke('podcast:update', id, patch),
-  deleteEpisode: (id) => ipcRenderer.invoke('podcast:delete', id),
-  exportEpisode: (id) => ipcRenderer.invoke('podcast:export', id),
-  cancelPodcastExport: () => ipcRenderer.invoke('podcast:export-cancel'),
-  podcastExportStatus: () => ipcRenderer.invoke('podcast:export-status'),
-  revealPodcastExport: (filePath) => ipcRenderer.invoke('podcast:reveal-export', filePath),
-  startPodcastRecording: (deviceId) => ipcRenderer.invoke('podcast:record-start', deviceId),
-  stopPodcastRecording: () => ipcRenderer.invoke('podcast:record-stop'),
-  podcastRecordingStatus: () => ipcRenderer.invoke('podcast:record-status'),
-  getPodcastWaveform: (segment) => ipcRenderer.invoke('podcast:waveform', segment),
-  getPodcastSegmentAudioUrl: (segment) => ipcRenderer.invoke('podcast:segment-audio-url', segment),
-  measurePodcastEpisode: (episode) => ipcRenderer.invoke('podcast:metrics', episode),
+  listEpisodes: invoke('podcast:list'),
+  createEpisode: invoke('podcast:create'),
+  updateEpisode: invoke('podcast:update'),
+  deleteEpisode: invoke('podcast:delete'),
+  exportEpisode: invoke('podcast:export'),
+  cancelPodcastExport: invoke('podcast:export-cancel'),
+  podcastExportStatus: invoke('podcast:export-status'),
+  revealPodcastExport: invoke('podcast:reveal-export'),
+  startPodcastRecording: invoke('podcast:record-start'),
+  stopPodcastRecording: invoke('podcast:record-stop'),
+  podcastRecordingStatus: invoke('podcast:record-status'),
+  getPodcastWaveform: invoke('podcast:waveform'),
+  getPodcastSegmentAudioUrl: invoke('podcast:segment-audio-url'),
+  measurePodcastEpisode: invoke('podcast:metrics'),
 
-  // Configuracion persistida (servidor, credenciales, pistas activas)
-  loadSettings: () => ipcRenderer.invoke('settings:load'),
-  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
-  listProviders: () => ipcRenderer.invoke('providers:list'),
+  // Configuracion, proveedores, actualizaciones, historial y programacion
+  loadSettings: invoke('settings:load'),
+  saveSettings: invoke('settings:save'),
+  listProviders: invoke('providers:list'),
+  checkForUpdates: invoke('updates:check'),
+  getUpdateState: invoke('updates:state'),
+  restartToUpdate: invoke('updates:restart'),
+  listHistory: invoke('history:list'),
+  revealRecording: invoke('history:reveal-recording'),
+  loadSchedule: invoke('schedule:load'),
+  saveSchedule: invoke('schedule:save'),
 
-  // Actualizaciones (boton manual + popup/insignia en la barra lateral)
-  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
-  getUpdateState: () => ipcRenderer.invoke('updates:state'),
-  restartToUpdate: () => ipcRenderer.invoke('updates:restart'),
+  // Ventana
+  setCompactMode: invoke('window:set-compact'),
+  // El renderer informa si muestra vumetro/espectro (el main deja de calcularlos si no).
+  setMetricsDemand: (wanted) => ipcRenderer.send('ui:metrics-demand', Boolean(wanted)),
 
-  // Historial de transmisiones
-  listHistory: () => ipcRenderer.invoke('history:list'),
-  revealRecording: (filePath) => ipcRenderer.invoke('history:reveal-recording', filePath),
-
-  // Programacion automatica
-  loadSchedule: () => ipcRenderer.invoke('schedule:load'),
-  saveSchedule: (schedule) => ipcRenderer.invoke('schedule:save', schedule),
-
-  // Modo mini-ventana flotante
-  setCompactMode: (enabled) => ipcRenderer.invoke('window:set-compact', enabled),
-
-  onLog: (callback) => subscribe('stream:log', callback),
-  onStatus: (callback) => subscribe('stream:status', callback),
-  onVuLevel: (callback) => subscribe('stream:vu-level', callback),
-  onPreviewVuLevel: (callback) => subscribe('stream:preview-vu-level', callback),
-  onSpectrum: (callback) => subscribe('stream:spectrum', callback),
-  onDeadAir: (callback) => subscribe('stream:dead-air', callback),
-  onIntroProgress: (callback) => subscribe('stream:intro-progress', callback),
-  onOutroProgress: (callback) => subscribe('stream:outro-progress', callback),
-  onUpdateState: (callback) => subscribe('app:update-state', callback),
-  onPodcastExportProgress: (callback) => subscribe('podcast:export-progress', callback),
-  onPodcastRecordingState: (callback) => subscribe('podcast:recording-state', callback),
-  onPodcastRecordingLevel: (callback) => subscribe('podcast:recording-level', callback),
-  onRecordingSaveState: (callback) => subscribe('recording:save-state', callback)
+  // Eventos main -> renderer
+  onLog: listen('stream:log'),
+  onStatus: listen('stream:status'),
+  onAudioMetrics: listen('stream:audio-metrics'),
+  onVuLevel: listen('stream:audio-metrics', (payload) => payload.vu),
+  onSpectrum: listen('stream:audio-metrics', (payload) => ({ bands: payload.bands })),
+  onPreviewVuLevel: listen('stream:preview-vu-level'),
+  onDeadAir: listen('stream:dead-air'),
+  onIntroProgress: listen('stream:intro-progress'),
+  onOutroProgress: listen('stream:outro-progress'),
+  onUpdateState: listen('app:update-state'),
+  onPodcastExportProgress: listen('podcast:export-progress'),
+  onPodcastRecordingState: listen('podcast:recording-state'),
+  onPodcastRecordingLevel: listen('podcast:recording-level'),
+  onRecordingSaveState: listen('recording:save-state')
 });
-
-function subscribe(channel, callback) {
-  const listener = (_event, payload) => callback(payload);
-  ipcRenderer.on(channel, listener);
-  return () => ipcRenderer.removeListener(channel, listener);
-}
