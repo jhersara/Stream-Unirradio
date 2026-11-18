@@ -1,5 +1,5 @@
 const assert = require('assert');
-const providers = require('./src/main/radio-providers');
+const providers = require('./src/main/services/providers/radio-providers');
 
 const base = {
   server: 'link.zeno.fm',

@@ -1,40 +1,28 @@
-const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { app } = require('electron');
+const { createJsonStore } = require('./json-store');
 
 /**
- * Persistencia local de Podcast Studio.
- * Los episodios guardan metadatos y referencias a pistas de la biblioteca o
- * a tomas de voz creadas dentro de app.getPath('userData').
+ * Persistencia local de Podcast Studio. Los episodios guardan metadatos y
+ * referencias a pistas de la biblioteca o a tomas de voz dentro de userData.
  */
 function getRoot() {
   return path.join(app.getPath('userData'), 'podcast-studio');
 }
 
-function getIndexPath() {
-  return path.join(getRoot(), 'episodes.json');
+function getRecordingsRoot() {
+  return path.join(getRoot(), 'recordings');
 }
 
-function readEpisodes() {
-  const indexPath = getIndexPath();
-  if (!fs.existsSync(indexPath)) return [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+const store = createJsonStore({
+  filePath: () => path.join(getRoot(), 'episodes.json'),
+  fallback: () => [],
+  migrate: (data) => (Array.isArray(data) ? data : [])
+});
 
-function writeEpisodes(episodes) {
-  fs.mkdirSync(getRoot(), { recursive: true });
-  fs.writeFileSync(getIndexPath(), JSON.stringify(episodes, null, 2), 'utf-8');
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
+const nowIso = () => new Date().toISOString();
+const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
 function clamp(value, min, max, fallback) {
   const number = Number(value);
@@ -124,51 +112,50 @@ function normalizeEpisode(input = {}) {
 }
 
 function listEpisodes() {
-  return readEpisodes().sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return [...store.get()].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
 function getEpisode(id) {
-  return readEpisodes().find((episode) => episode.id === id) || null;
+  return store.get().find((episode) => episode.id === id) || null;
 }
 
 function createEpisode(input = {}) {
-  const episodes = readEpisodes();
   const episode = normalizeEpisode(input);
-  episodes.push(episode);
-  writeEpisodes(episodes);
+  store.set([...store.get(), episode]);
   return episode;
 }
 
 function updateEpisode(id, patch = {}) {
-  const episodes = readEpisodes();
+  const episodes = [...store.get()];
   const index = episodes.findIndex((episode) => episode.id === id);
   if (index === -1) return null;
 
   const current = episodes[index];
   const next = {
     ...current,
-    ...(Object.prototype.hasOwnProperty.call(patch, 'title') ? { title: String(patch.title || '').trim().slice(0, 160) || 'Sin título' } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'description') ? { description: String(patch.description || '').slice(0, 2000) } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'segments') ? { segments: normalizeSegments(patch.segments) } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'status') ? { status: patch.status === 'exported' ? 'exported' : 'draft' } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'exportPath') ? { exportPath: patch.exportPath || null } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'exportedAt') ? { exportedAt: patch.exportedAt || null } : {}),
-    ...(Object.prototype.hasOwnProperty.call(patch, 'mixSettings') ? { mixSettings: normalizeMixSettings(patch.mixSettings) } : {}),
+    ...(has(patch, 'title') ? { title: String(patch.title || '').trim().slice(0, 160) || 'Sin título' } : {}),
+    ...(has(patch, 'description') ? { description: String(patch.description || '').slice(0, 2000) } : {}),
+    ...(has(patch, 'segments') ? { segments: normalizeSegments(patch.segments) } : {}),
+    ...(has(patch, 'status') ? { status: patch.status === 'exported' ? 'exported' : 'draft' } : {}),
+    ...(has(patch, 'exportPath') ? { exportPath: patch.exportPath || null } : {}),
+    ...(has(patch, 'exportedAt') ? { exportedAt: patch.exportedAt || null } : {}),
+    ...(has(patch, 'mixSettings') ? { mixSettings: normalizeMixSettings(patch.mixSettings) } : {}),
     updatedAt: nowIso()
   };
   episodes[index] = next;
-  writeEpisodes(episodes);
+  store.set(episodes);
   return next;
 }
 
 function deleteEpisode(id) {
-  const episodes = readEpisodes();
+  const episodes = store.get();
   const filtered = episodes.filter((episode) => episode.id !== id);
-  writeEpisodes(filtered);
+  store.set(filtered);
   return filtered.length !== episodes.length;
 }
 
 module.exports = {
+  getRecordingsRoot,
   listEpisodes,
   getEpisode,
   createEpisode,

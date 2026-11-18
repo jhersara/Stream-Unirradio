@@ -1,15 +1,8 @@
 const net = require('net');
 const { EventEmitter } = require('events');
+const { cleanHost } = require('./radio-providers');
 
 const HANDSHAKE_TIMEOUT_MS = 8000;
-
-function cleanHost(server) {
-  return String(server || '')
-    .trim()
-    .replace(/^\w+:\/\//, '')
-    .replace(/\/.*$/, '')
-    .replace(/\/+$/, '');
-}
 
 function buildIcyHeaders(config) {
   const bitrate = String(config.bitrate || '128k').replace(/k$/i, '');

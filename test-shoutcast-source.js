@@ -1,6 +1,6 @@
 const assert = require('assert');
 const net = require('net');
-const { ShoutcastSourceBridge } = require('./src/main/shoutcast-source');
+const { ShoutcastSourceBridge } = require('./src/main/services/providers/shoutcast-source');
 
 const server = net.createServer();
 let received = Buffer.alloc(0);

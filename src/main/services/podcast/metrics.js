@@ -1,7 +1,8 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { resolveFfmpegPath } = require('./media-probe');
-const libraryManager = require('./library-manager');
+const { resolveFfmpegPath } = require('../media/probe');
+const libraryManager = require('../media/library');
+const { lowerPriority } = require('../../utils/process');
 
 const TRACKS = ['voice', 'music', 'identity'];
 
@@ -37,6 +38,7 @@ function runSegmentMeter(segment) {
     }
     let stderr = '';
     process.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    lowerPriority(process);
     process.on('error', () => resolve(null));
     process.on('close', () => {
       const rmsMatches = [...stderr.matchAll(/RMS level dB:\s*(-?[\d.]+)/gi)];

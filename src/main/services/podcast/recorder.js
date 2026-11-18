@@ -1,34 +1,32 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { app } = require('electron');
-const { resolveFfmpegPath } = require('./media-probe');
-const audioCapture = require('./audio-capture');
-const { sendLog, sendPodcastRecordingState, sendPodcastRecordingLevel } = require('./ipc-events');
+const { resolveFfmpegPath } = require('../media/probe');
+const audioCapture = require('../audio/capture');
+const { computeSimpleLevels } = require('../audio/dsp');
+const { asInt16 } = require('../audio/pcm');
+const { getRecordingsRoot } = require('../../stores/podcast');
+const { gracefullyEndProcess, killQuietly } = require('../../utils/process');
+const { sendLog, sendPodcastRecordingState, sendPodcastRecordingLevel } = require('../../ipc/events');
 
 const SAMPLE_RATE = 44100;
 const CHANNELS = 2;
-// Diez actualizaciones por segundo mantienen el medidor fluido con menor carga.
 const VU_EMIT_INTERVAL_MS = 100;
 
 let recording = null;
 
-function getRecordingRoot() {
-  const root = path.join(app.getPath('userData'), 'podcast-studio', 'recordings');
-  fs.mkdirSync(root, { recursive: true });
-  return root;
-}
-
 function buildRecordingPath() {
+  const root = getRecordingsRoot();
+  fs.mkdirSync(root, { recursive: true });
   const now = new Date();
   const pad = (value) => String(value).padStart(2, '0');
   const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-  return path.join(getRecordingRoot(), `voz-${stamp}.mp3`);
+  return path.join(root, `voz-${stamp}.mp3`);
 }
 
 function buildArgs(outputPath) {
   return [
-    '-y', '-hide_banner', '-loglevel', 'warning',
+    '-y', '-hide_banner', '-loglevel', 'warning', '-threads', '1',
     '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS),
     '-i', 'pipe:0',
     '-c:a', 'libmp3lame', '-b:a', '192k',
@@ -37,59 +35,6 @@ function buildArgs(outputPath) {
     '-metadata', 'comment=Voz grabada desde Podcast Studio',
     outputPath
   ];
-}
-
-function normalizedToDb(value) {
-  return value > 0 ? 20 * Math.log10(Math.min(1, value)) : -100;
-}
-
-function computeMetrics(buffer) {
-  let peak = 0;
-  let sumSquares = 0;
-  let samples = 0;
-  for (let i = 0; i + 1 < buffer.length; i += 2) {
-    const sample = buffer.readInt16LE(i);
-    const absolute = Math.abs(sample);
-    if (absolute > peak) peak = absolute;
-    sumSquares += sample * sample;
-    samples += 1;
-  }
-  const peakNormalized = peak / 32768;
-  const rms = samples > 0 ? Math.sqrt(sumSquares / samples) / 32768 : 0;
-  return { peak: peakNormalized, db: normalizedToDb(peakNormalized), rmsDb: normalizedToDb(rms) };
-}
-
-function gracefullyCloseEncoder(process, timeoutMs = 3500) {
-  return new Promise((resolve) => {
-    if (!process || process.exitCode !== null) {
-      resolve();
-      return;
-    }
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { process.kill(); } catch { /* noop */ }
-      resolve();
-    }, timeoutMs);
-    process.once('close', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve();
-    });
-    try {
-      if (process.stdin && !process.stdin.destroyed) process.stdin.end();
-      else process.kill();
-    } catch {
-      clearTimeout(timer);
-      if (!settled) {
-        settled = true;
-        try { process.kill(); } catch { /* noop */ }
-        resolve();
-      }
-    }
-  });
 }
 
 function start(mainWindow, deviceId) {
@@ -106,22 +51,21 @@ function start(mainWindow, deviceId) {
     encoderProcess = spawn(resolveFfmpegPath(), buildArgs(outputPath), { windowsHide: true });
     inputStream = audioCapture.createInputStream(deviceId, SAMPLE_RATE, CHANNELS);
   } catch (error) {
-    try { encoderProcess?.kill(); } catch { /* noop */ }
+    if (encoderProcess) killQuietly(encoderProcess);
     sendLog(mainWindow, `ERROR iniciando grabación de voz: ${error.message}`);
     return { ok: false, reason: 'start-failed', message: error.message };
   }
 
   recording = {
-    mainWindow,
     outputPath,
     encoderProcess,
     inputStream,
     startedAt: Date.now(),
     lastEmit: 0,
-    stopRequested: false,
-    closed: false
+    stopRequested: false
   };
 
+  encoderProcess.stdin.on('error', () => { /* el cierre del encoder informa del problema */ });
   encoderProcess.stderr.on('data', (chunk) => {
     const text = chunk.toString().trim();
     if (text) sendLog(mainWindow, `Grabación de voz: ${text}`);
@@ -141,16 +85,16 @@ function start(mainWindow, deviceId) {
     try {
       if (encoderProcess.stdin && !encoderProcess.stdin.destroyed) encoderProcess.stdin.write(chunk);
     } catch {
-      // El cierre/error del encoder informará del problema al operador.
+      // El cierre/error del encoder informara del problema al operador.
     }
     const now = Date.now();
     if (now - recording.lastEmit >= VU_EMIT_INTERVAL_MS) {
       recording.lastEmit = now;
-      const metrics = computeMetrics(chunk);
+      const levels = computeSimpleLevels(asInt16(chunk));
       sendPodcastRecordingLevel(mainWindow, {
-        peak: metrics.peak,
-        db: metrics.db,
-        rmsDb: metrics.rmsDb,
+        peak: levels.peak,
+        db: levels.db,
+        rmsDb: levels.rmsDb,
         elapsedSeconds: (now - recording.startedAt) / 1000
       });
     }
@@ -171,9 +115,9 @@ async function finish(mainWindow, state = 'stopped', message = null) {
   current.stopRequested = true;
   const durationSeconds = (Date.now() - current.startedAt) / 1000;
   try { current.inputStream.quit(() => {}); } catch { /* noop */ }
-  await gracefullyCloseEncoder(current.encoderProcess);
+  await gracefullyEndProcess(current.encoderProcess, 3500);
   recording = null;
-  const exists = fs.existsSync(current.outputPath);
+  const exists = await fs.promises.access(current.outputPath).then(() => true, () => false);
   const result = {
     ok: state !== 'error' && exists,
     state,
@@ -200,7 +144,7 @@ function shutdown() {
   const current = recording;
   recording = null;
   try { current.inputStream.quit(() => {}); } catch { /* noop */ }
-  try { current.encoderProcess.kill(); } catch { /* noop */ }
+  killQuietly(current.encoderProcess);
 }
 
 function isRecording() {

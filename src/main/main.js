@@ -1,168 +1,65 @@
-const { app, BrowserWindow, dialog, protocol } = require('electron');
-const fs = require('fs');
-const path = require('path');
-const libraryManager = require('./library-manager');
-const mediaPreviewStore = require('./media-preview-store');
+const { app, BrowserWindow } = require('electron');
+const { registerSchemes, registerMediaProtocol } = require('./app/protocol');
+const { createMainWindow } = require('./app/window');
+const { registerIpcHandlers } = require('./ipc/register');
+const { flushAllSync } = require('./stores/json-store');
+const stream = require('./services/stream');
+const podcastRecorder = require('./services/podcast/recorder');
+const podcastExporter = require('./services/podcast/exporter');
+const { startScheduler } = require('./services/scheduler/scheduler');
+const { initAutoUpdater } = require('./services/updater/auto-updater');
 
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'streamradio',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
-  }
-]);
-const { registerIpcHandlers } = require('./ipc-handlers');
-const { initAutoUpdater } = require('./auto-updater');
-const ffmpegStream = require('./ffmpeg-stream');
-const podcastRecorder = require('./podcast-recorder');
-const podcastExporter = require('./podcast-exporter');
-const { startScheduler } = require('./scheduler');
+// Debe ir antes de app.ready.
+registerSchemes();
+
+// Menos procesos/servicios de Chromium que esta app no usa, y tope de heap
+// para el renderer (la UI es ligera: 256 MB sobran).
+app.commandLine.appendSwitch('disable-features', 'Translate,MediaRouter,OptimizationHints');
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=256');
 
 let mainWindow = null;
-let forceClose = false;
+const getWindow = () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
 
-function writeRuntimeDiagnostic(message) {
-  const line = `[${new Date().toISOString()}] ${message}\n`;
-  fs.promises.mkdir(app.getPath('logs'), { recursive: true })
-    .then(() => fs.promises.appendFile(path.join(app.getPath('logs'), 'stream-radio-runtime.log'), line, 'utf8'))
-    .catch(() => {});
+function openMainWindow() {
+  mainWindow = createMainWindow();
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// ---------------------------------------------------------------------------
-// Bloqueo de instancia unica: sin esto, cualquier doble arranque (doble
-// clic accidental, el instalador reabriendo la app tras "Ejecutar ahora",
-// etc.) crea una SEGUNDA ventana completa en vez de simplemente enfocar la
-// que ya esta abierta -- esto era el bug de "se me abren dos pestañas".
-// ---------------------------------------------------------------------------
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+function shutdownServices() {
+  podcastExporter.cancelExport();
+  podcastRecorder.shutdown();
+  stream.shutdown();
+  flushAllSync();
+}
 
-if (!gotSingleInstanceLock) {
+// Instancia unica: un segundo arranque solo enfoca la ventana existente.
+if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    const win = getWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
   });
 
-  bootstrapApp();
-}
-
-function registerLibraryMediaProtocol() {
-  protocol.registerFileProtocol('streamradio', (request, callback) => {
-    try {
-      const requestUrl = new URL(request.url);
-      if (requestUrl.hostname !== 'track' && requestUrl.hostname !== 'podcast') {
-        callback({ error: -6 });
-        return;
-      }
-
-      const resourceId = decodeURIComponent(requestUrl.pathname.replace(/^\/+/, ''));
-      const filePath = requestUrl.hostname === 'track'
-        ? libraryManager.getTrackPath(resourceId)
-        : requestUrl.hostname === 'podcast'
-          ? mediaPreviewStore.resolve(resourceId)
-          : null;
-      if (!filePath) {
-        callback({ error: -6 });
-        return;
-      }
-
-      fs.promises.access(filePath, fs.constants.R_OK)
-        .then(() => callback({ path: filePath }))
-        .catch(() => callback({ error: -6 }));
-    } catch {
-      callback({ error: -2 });
-    }
-  });
-}
-
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1250,
-    height: 780,
-    minWidth: 640,
-    minHeight: 680,
-    backgroundColor: '#14161a',
-    autoHideMenuBar: true,
-    icon: path.join(__dirname, '..', '..', 'resources', 'icon.ico'),
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  });
-
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  mainWindow.on('unresponsive', () => writeRuntimeDiagnostic('La ventana de Electron reportó UNRESPONSIVE.'));
-  mainWindow.on('responsive', () => writeRuntimeDiagnostic('La ventana de Electron volvió a responder.'));
-  mainWindow.webContents.on('render-process-gone', (event, details) => {
-    writeRuntimeDiagnostic(`El proceso renderer terminó: reason=${details.reason || 'unknown'} exitCode=${details.exitCode ?? 'unknown'}.`);
-  });
-  mainWindow.webContents.on('crashed', () => writeRuntimeDiagnostic('El renderer reportó un crash.'));
-
-  // ffmpeg-stream.js recibe mainWindow directamente en cada llamada desde
-  // ipc-handlers.js (startStream(mainWindow, config) / stopStream(mainWindow))
-  // para poder emitir stream:log, stream:status, stream:vu-level,
-  // stream:intro-progress, stream:outro-progress.
-  registerIpcHandlers(mainWindow);
-
-  // Si hay una transmision activa y el usuario intenta cerrar la ventana,
-  // confirmar primero: cerrar sin avisar cortaria el stream de inmediato,
-  // sin reproducir el outro.
-  mainWindow.on('close', (event) => {
-    if (forceClose || !ffmpegStream.isStreaming()) return;
-
-    event.preventDefault();
-    const choice = dialog.showMessageBoxSync(mainWindow, {
-      type: 'warning',
-      buttons: ['Cancelar', 'Detener y salir'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Transmision activa',
-      message: 'Hay una transmision en curso.',
-      detail: 'Si sales ahora la conexion se cortara de inmediato, sin reproducir el outro. ¿Deseas continuar?'
-    });
-
-    if (choice === 1) {
-      forceClose = true;
-      ffmpegStream.shutdown();
-      mainWindow.close();
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-}
-
-function bootstrapApp() {
   app.whenReady().then(() => {
-    registerLibraryMediaProtocol();
-    createWindow();
-    initAutoUpdater(mainWindow);
-    startScheduler(mainWindow);
+    registerMediaProtocol();
+    registerIpcHandlers(getWindow);
+    openMainWindow();
+    startScheduler(getWindow);
+    // El updater (pesado) se inicializa cuando la ventana ya esta en pantalla.
+    setTimeout(() => initAutoUpdater(getWindow), 4000).unref?.();
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
+      if (BrowserWindow.getAllWindows().length === 0) openMainWindow();
     });
   });
 
   app.on('window-all-closed', () => {
-    podcastExporter.cancelExport();
-    podcastRecorder.shutdown();
-    ffmpegStream.shutdown();
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
+    shutdownServices();
+    if (process.platform !== 'darwin') app.quit();
   });
 
-  app.on('before-quit', () => {
-    podcastExporter.cancelExport();
-    podcastRecorder.shutdown();
-    ffmpegStream.shutdown();
-  });
+  app.on('before-quit', shutdownServices);
 }
